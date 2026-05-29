@@ -13,10 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 var l = log.Println
@@ -107,7 +104,8 @@ func handleClient(client net.Conn, transport *http.Transport) {
 		defer client.Close()
 
 		buffer := [8192 * 2]byte{} // 16kb
-		id := strings.ReplaceAll(uuid.New().String(), "-", "")
+		id := 12
+		l("fucking id", id)
 		for {
 			l("IM here AGAIN")
 			n, error1 := client.Read(buffer[:])
@@ -166,16 +164,15 @@ func handleClient(client net.Conn, transport *http.Transport) {
 			}
 			bytes, _ := io.ReadAll(resp.Body)
 			l(bytes)
-			l("fuckingbody response", string(bytes))
+			l("fuckingbody response", string(bytes), "\nresp body itself:", resp.Body, "\nresp:", resp)
 			var validJMap map[string]any
 			json.Unmarshal(bytes, &validJMap)
+			l("fucking resssp:", validJMap["result"])
+			var validJDMap map[string]any
+			json.Unmarshal([]byte(validJMap["result"].(string)), &validJDMap)
+			packet, _ := base64.StdEncoding.DecodeString(validJDMap["data"].(string))
+			client.Write(packet)
 
-			responses := validJMap["responses"].([]any)
-			l(responses)
-			for _, response := range responses {
-				packet, _ := base64.StdEncoding.DecodeString(response.(string))
-				client.Write(packet)
-			}
 		}
 	}
 
