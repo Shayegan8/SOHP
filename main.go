@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -14,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -106,62 +106,77 @@ func handleClient(client net.Conn, transport *http.Transport) {
 		defer connection.Close()
 		defer client.Close()
 
-		readIO := bufio.NewReader(client)
 		buffer := [8192 * 2]byte{} // 16kb
-		id, seq := uuid.New().String(), 0
-		go func() {
-			for {
-				n, error1 := readIO.Read(buffer[:])
+		id := strings.ReplaceAll(uuid.New().String(), "-", "")
+		for {
+			l("IM here AGAIN")
+			n, error1 := client.Read(buffer[:])
+
+			if error1 != nil {
 				if error1 == io.EOF {
 					l("Problem with connecting to target server (SNI) or End of stream for", error1)
-					break
-				}
-				requestChunk := base64.StdEncoding.EncodeToString(buffer[:n])
-				var myJson = map[string]any{
-					"id":      id,
-					"seq":     seq,
-					"data":    requestChunk,
-					"dstaddr": dstaddr,
-					"dstport": dstport,
-				}
-				seq++
-				jsonData, _ := json.Marshal(myJson)
-				req, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-				req.Header.Set("Content-Type", "application/json")
-				req.Host = "script.google.com"
-				client1 := &http.Client{
-					Timeout:   time.Duration(configMap["sni_timeout"].(int)) * time.Second,
-					Transport: transport,
-					CheckRedirect: func(req *http.Request, via []*http.Request) error {
-						return http.ErrUseLastResponse
-					},
-				}
-				resp, error1 := client1.Do(req)
-				if error1 != nil {
-					l("fucking problem with POSTing an asshole", err)
-					break
-				}
-				location := resp.Header.Get("location")
-				somepart := location[36:]
 
-				// second part
-				secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil) // we get response from here maybe?
-
-				req.Header.Set("Content-Type", "application/json")
-				secondReq.Host = "script.googleusercontent.com"
-				resp, error1 = client1.Do(secondReq)
-				if error1 != nil {
-					l("fucking problem with GETing an asshole", err)
-					break
 				}
-				bytes, _ := io.ReadAll(resp.Body)
-				var validJMap map[string]any
-				json.Unmarshal(bytes, &validJMap)
-				l("FuckingBody ->", validJMap)
-				packet, _ := base64.StdEncoding.DecodeString(validJMap["data"].(string))
+				break
+			}
+			if n == 0 {
+				l("still i didn't receive")
+				continue
+			}
+			requestChunk := base64.StdEncoding.EncodeToString(buffer[:n])
+			l("User request\n", requestChunk)
+			var myJson = map[string]any{
+				"id":      id,
+				"data":    requestChunk,
+				"dstaddr": dstaddr,
+				"dstport": dstport,
+			}
+			jsonData, _ := json.Marshal(myJson)
+			req, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+			req.Header.Set("Content-Type", "application/json")
+			req.Host = "script.google.com"
+			client1 := &http.Client{
+				Timeout:   30 * time.Second,
+				Transport: transport,
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					return http.ErrUseLastResponse
+				},
+			}
+			resp, error1 := client1.Do(req)
+			if error1 != nil {
+				l("fucking problem with POSTing an asshole", err)
+				break
+			}
+			a, _ := io.ReadAll(resp.Body)
+			l(string(a))
+
+			location := resp.Header.Get("location")
+			l(location)
+			somepart := location[36:]
+
+			// second part
+			secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil) // we get response from here maybe?
+
+			req.Header.Set("Content-Type", "application/json")
+			secondReq.Host = "script.googleusercontent.com"
+			resp, error1 = client1.Do(secondReq)
+			if error1 != nil {
+				l("fucking problem with GETing an asshole", err)
+				break
+			}
+			bytes, _ := io.ReadAll(resp.Body)
+			l(bytes)
+			l("fuckingbody response", string(bytes))
+			var validJMap map[string]any
+			json.Unmarshal(bytes, &validJMap)
+
+			responses := validJMap["responses"].([]any)
+			l(responses)
+			for _, response := range responses {
+				packet, _ := base64.StdEncoding.DecodeString(response.(string))
 				client.Write(packet)
 			}
-		}()
+		}
 	}
 
 }
@@ -169,7 +184,7 @@ func handleClient(client net.Conn, transport *http.Transport) {
 func main() {
 	json.Unmarshal(configFile, &configMap)
 	dialer := &net.Dialer{
-		Timeout: time.Duration(configMap["sni_timeout"].(int)) * time.Second,
+		Timeout: 30 * time.Second,
 	}
 	myTransport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -177,6 +192,7 @@ func main() {
 			return dialer.DialContext(ctx, network, addr)
 		},
 		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
 			ServerName: "www.google.com",
 		},
 	}
