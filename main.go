@@ -25,6 +25,11 @@ var configMap map[string]any
 //go:embed config.json
 var configFile []byte
 
+type SockRead struct {
+	n   int
+	err any
+}
+
 func handleClient(client net.Conn, transport *http.Transport) {
 
 	sbreq := make([]byte, 8) //this is to much even, literally all of this request packets
@@ -81,6 +86,7 @@ func handleClient(client net.Conn, transport *http.Transport) {
 	}
 	dstport = binary.BigEndian.Uint16(areq[portoffset : portoffset+2])
 	log.Println("FUCKING PORT", dstport)
+
 	switch areq[1] { // CMD
 	case 0x01: // CONNECT
 		log.Println("CONNECT")
@@ -108,24 +114,22 @@ func handleClient(client net.Conn, transport *http.Transport) {
 		buffer := make([]byte, 16384) // 16kb
 		id := uuid.New().String()
 		l("fucking id", id)
-		nextRequest := false
 		for {
 			var n1 int
 			var error1 any
-			if !nextRequest {
-				n1, error1 = client.Read(buffer[:]) // client chunk
-				if error1 != nil {
-					if error1 == io.EOF {
-						l("End of stream", error1)
-					} else {
-						l("Problem with connecting to target server (SNI)", error1)
-					}
-					break
+			n1, error1 = client.Read(buffer[:]) // client chunk
+
+			if error1 != nil {
+				if error1 == io.EOF {
+					l("End of stream", error1)
+				} else {
+					l("Problem with connecting to target server (SNI)", error1)
 				}
-				if n1 == 0 {
-					l("still i didn't receive")
-					continue
-				}
+				break
+			}
+			if n1 == 0 {
+				l("still i didn't receive")
+				continue
 			}
 			request := base64.StdEncoding.EncodeToString(buffer[:n1]) // encode client chunk
 			l("User request: ", request, "n for the newest commit: ", n1)
@@ -136,9 +140,8 @@ func handleClient(client net.Conn, transport *http.Transport) {
 				"dstport": dstport,
 				"type":    "first",
 			}
-			jsonData, _ := json.Marshal(myJson) // get the bytes of json request
+			jsonData, _ := json.Marshal(myJson)
 
-			//creating request object and sending it with custom client
 			requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
 			requestBody.Header.Set("Content-Type", "application/json")
 			requestBody.Host = "script.google.com"
@@ -151,22 +154,15 @@ func handleClient(client net.Conn, transport *http.Transport) {
 			}
 			resp, error1 := client1.Do(requestBody)
 
-			//checking for errors
 			if error1 != nil {
 				l("fucking problem with POSTing an asshole", err)
 				break
 			}
-			//writing response of first request on stdout
-			a, _ := io.ReadAll(resp.Body)
-			l(string(a))
 
-			//grapping the redirect path
 			location := resp.Header.Get("location")
-			l(location)
 			somepart := location[36:]
 
-			// waiting for response
-			secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil) // we get response from here maybe?
+			secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
 
 			secondReq.Host = "script.googleusercontent.com"
 			resp, error1 = client1.Do(secondReq)
@@ -175,38 +171,51 @@ func handleClient(client net.Conn, transport *http.Transport) {
 				break
 			}
 			bytesa, _ := io.ReadAll(resp.Body)
-			l(bytesa)
-			l("fuckingbody response", string(bytesa), "\nresp body itself:", resp.Body, "\nresp:", resp)
+			l("fuckingbody response", string(bytesa))
 
 			packet, _ := base64.StdEncoding.DecodeString(string(bytesa))
 			client.Write(packet)
-			for n2, _ := client.Read(buffer[:]); n2 == 0; {
 
+			for {
 				myJson = map[string]any{
 					"id":   id,
 					"type": "next",
 				}
-				jsonData, _ = json.Marshal(myJson)
-
-				requestBody, err = http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+				jsonData, _ := json.Marshal(myJson)
+				requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
 				requestBody.Header.Set("Content-Type", "application/json")
 				requestBody.Host = "script.google.com"
-				resp, error1 = client1.Do(requestBody)
+				client1 := &http.Client{
+					Timeout:   30 * time.Second,
+					Transport: transport,
+					CheckRedirect: func(req *http.Request, via []*http.Request) error {
+						return http.ErrUseLastResponse
+					},
+				}
+				resp, error1 := client1.Do(requestBody)
 
-				//checking for errors
 				if error1 != nil {
 					l("fucking problem with POSTing an asshole", err)
 					break
 				}
-				bytesa, _ = io.ReadAll(resp.Body)
-				l(bytesa)
-				l("fuckingbody response", string(bytesa), "\nresp body itself:", resp.Body, "\nresp:", resp)
 
-				packet, _ = base64.StdEncoding.DecodeString(string(bytesa))
+				location := resp.Header.Get("location")
+				somepart := location[36:]
+
+				secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
+
+				secondReq.Host = "script.googleusercontent.com"
+				resp, error1 = client1.Do(secondReq)
+				bea, _ := io.ReadAll(resp.Body)
+				if error1 != nil || string(bea) == "null" {
+					l("fucking problem with GETing an asshole OR end", err, string(bea))
+					break
+				}
+				l("fuckingbody response", string(bea))
+
+				packet, _ := base64.StdEncoding.DecodeString(string(bea))
 				client.Write(packet)
-
 			}
-			nextRequest = true
 		}
 	}
 
