@@ -25,20 +25,6 @@ var configMap map[string]any
 //go:embed config.json
 var configFile []byte
 
-func readFullPacket(client net.Conn, buffer []byte) int {
-	tempBuff := make([]byte, 16*1024)
-	tN := 0
-	for {
-		n, err := client.Read(tempBuff)
-		if err != nil || n == 0 {
-			break
-		}
-		tN += n
-		buffer = append(buffer, tempBuff[n])
-	}
-	return tN
-}
-
 func handleClient(client net.Conn, transport *http.Transport) {
 
 	sbreq := make([]byte, 8) //this is to much even, literally all of this request packets
@@ -54,10 +40,10 @@ func handleClient(client net.Conn, transport *http.Transport) {
 	sbresp := make([]byte, 2)
 	sbresp[0] = 0x05
 	sbresp[1] = 0x00
-	n, _ = client.Write(sbresp)
+	client.Write(sbresp)
 	log.Println("Sub negotiation finished for", client.RemoteAddr().String())
 	areq := make([]byte, 8192*2) //16kb
-	n, err = client.Read(areq)
+	_, err = client.Read(areq)
 	if err != nil {
 		return
 	}
@@ -124,8 +110,10 @@ func handleClient(client net.Conn, transport *http.Transport) {
 		l("fucking id", id)
 		nextRequest := false
 		for {
+			var n1 int
+			var error1 any
 			if !nextRequest {
-				n, error1 := client.Read(buffer[:]) // client chunk
+				n1, error1 = client.Read(buffer[:]) // client chunk
 				if error1 != nil {
 					if error1 == io.EOF {
 						l("End of stream", error1)
@@ -134,14 +122,13 @@ func handleClient(client net.Conn, transport *http.Transport) {
 					}
 					break
 				}
-				if n == 0 {
+				if n1 == 0 {
 					l("still i didn't receive")
 					continue
 				}
 			}
-			l("non decoded buffer", string(buffer[:n]))
-			request := base64.StdEncoding.EncodeToString(buffer[:n]) // encode client chunk
-			l("User request\n", request)
+			request := base64.StdEncoding.EncodeToString(buffer[:n1]) // encode client chunk
+			l("User request: ", request, "n for the newest commit: ", n1)
 			var myJson = map[string]any{
 				"id":      id,
 				"data":    request,
@@ -193,7 +180,7 @@ func handleClient(client net.Conn, transport *http.Transport) {
 
 			packet, _ := base64.StdEncoding.DecodeString(string(bytesa))
 			client.Write(packet)
-			for n, _ := client.Read(buffer[:]); n == 0; {
+			for n2, _ := client.Read(buffer[:]); n2 == 0; {
 
 				myJson = map[string]any{
 					"id":   id,
