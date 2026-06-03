@@ -185,13 +185,6 @@ func handleClient(client net.Conn, transport *http.Transport) {
 				requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
 				requestBody.Header.Set("Content-Type", "application/json")
 				requestBody.Host = "script.google.com"
-				client1 := &http.Client{
-					Timeout:   30 * time.Second,
-					Transport: transport,
-					CheckRedirect: func(req *http.Request, via []*http.Request) error {
-						return http.ErrUseLastResponse
-					},
-				}
 				resp, error1 := client1.Do(requestBody)
 
 				if error1 != nil {
