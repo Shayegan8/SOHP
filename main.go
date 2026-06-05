@@ -173,6 +173,14 @@ func handleClient(client net.Conn, transport *http.Transport) {
 			resp.Body.Close()
 
 			for {
+				_, e := client.Read(buffer[:])
+				if e != nil {
+					l("Client socket is closed")
+					client.Close()
+					break
+				}
+				client.SetReadDeadline(time.Time{})
+
 				myJson = map[string]any{
 					"id":   id,
 					"type": "next",
@@ -206,13 +214,6 @@ func handleClient(client net.Conn, transport *http.Transport) {
 				client.Write(packet)
 				resp.Body.Close()
 				client.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-				_, e := client.Read(buffer[:])
-				if e != nil {
-					l("Client socket is closed")
-					client.Close()
-					break
-				}
-				client.SetReadDeadline(time.Time{})
 			}
 		}
 	}
