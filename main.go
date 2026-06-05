@@ -102,23 +102,17 @@ func handleClient(client net.Conn, transport *http.Transport) {
 		log.Println("the dstaddr", dstaddr)
 		dst := net.JoinHostPort(dstaddr, fmt.Sprintf("%d", dstport))
 		log.Println("the address", dst)
-		connection, err := net.Dial("tcp", dst)
-		if err != nil {
-			log.Println("fucked")
-			return
-		}
-		log.Print("here\n")
-		defer connection.Close()
 		defer client.Close()
 
-		buffer := make([]byte, 16384) // 16kb
+		buffer := make([]byte, 163840) // 160kb
 		id := uuid.New().String()
 		l("fucking id", id)
 		for {
 			var n1 int
 			var error1 any
+			l("maybe its blocking, why it cant capture the request?")
 			n1, error1 = client.Read(buffer[:]) // client chunk
-
+			l("We read a shit!!", n)
 			if error1 != nil {
 				if error1 == io.EOF {
 					l("End of stream", error1)
@@ -204,13 +198,21 @@ func handleClient(client net.Conn, transport *http.Transport) {
 				bea, _ := io.ReadAll(resp.Body)
 				if error1 != nil || string(bea) == "null" {
 					l("fucking problem with GETing an asshole OR end", err, string(bea))
-					break
+					continue
 				}
 				l("fuckingbody response", string(bea))
 
 				packet, _ := base64.StdEncoding.DecodeString(string(bea))
 				client.Write(packet)
 				resp.Body.Close()
+				client.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+				_, e := client.Read(buffer[:])
+				if e != nil {
+					l("Client socket is closed")
+					client.Close()
+					break
+				}
+				client.SetReadDeadline(time.Time{})
 			}
 		}
 	}
