@@ -162,6 +162,7 @@ func handleClient(client net.Conn, transport *http.Transport) {
 			location := resp.Header.Get("location")
 			somepart := location[36:]
 
+			resp.Body.Close()
 			secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
 
 			secondReq.Host = "script.googleusercontent.com"
@@ -175,6 +176,7 @@ func handleClient(client net.Conn, transport *http.Transport) {
 
 			packet, _ := base64.StdEncoding.DecodeString(string(bytesa))
 			client.Write(packet)
+			resp.Body.Close()
 
 			for {
 				myJson = map[string]any{
@@ -194,7 +196,7 @@ func handleClient(client net.Conn, transport *http.Transport) {
 
 				location := resp.Header.Get("location")
 				somepart := location[36:]
-
+				resp.Body.Close()
 				secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
 
 				secondReq.Host = "script.googleusercontent.com"
@@ -208,6 +210,7 @@ func handleClient(client net.Conn, transport *http.Transport) {
 
 				packet, _ := base64.StdEncoding.DecodeString(string(bea))
 				client.Write(packet)
+				resp.Body.Close()
 			}
 		}
 	}
