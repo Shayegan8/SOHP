@@ -13,6 +13,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,7 +33,7 @@ type SockRead struct {
 	err any
 }
 
-func handleClient(client net.Conn, transport *http.Transport) {
+func handleClient(client net.Conn, client1 *http.Client) {
 
 	sbreq := make([]byte, 8) //this is to much even, literally all of this request packets
 	n, err := client.Read(sbreq)
@@ -104,32 +107,41 @@ func handleClient(client net.Conn, transport *http.Transport) {
 		log.Println("the address", dst)
 		defer client.Close()
 
-		buffer := make([]byte, 163840) // 160kb
+		buffer := make([]byte, 16384) // 16kb
 		id := uuid.New().String()
 		l("fucking id", id)
+		var n1 int
+		var saved_request string
+		var error1 error
 		for {
-			var n1 int
-			var error1 any
 			l("maybe its blocking, why it cant capture the request?")
-			n1, error1 = client.Read(buffer[:]) // client chunk
-			l("We read a shit!!", n)
+			client.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+			n1, error1 = client.Read(buffer[:])
 			if error1 != nil {
 				if error1 == io.EOF {
 					l("End of stream", error1)
+					break
+				} else if strings.Contains(error1.Error(), "timeout") {
+					l("timeout", error1)
+					saved_request = ""
 				} else {
-					l("Problem with connecting to target server (SNI)", error1)
+					l(error1.Error()) // couldn't receive request
+					break
 				}
-				break
 			}
 			if n1 == 0 {
-				l("still i didn't receive")
-				continue
+				l("buffer is empty now we use saved_buffer")
+			} else {
+				request := base64.StdEncoding.EncodeToString(buffer[:n1])
+				l("Is request really different?", request)
+				saved_request = request
 			}
-			request := base64.StdEncoding.EncodeToString(buffer[:n1]) // encode client chunk
-			l("User request: ", request, "n for the newest commit: ", n1)
+
+			// encode client chunk
+			l("User request: ", saved_request, "n for the newest commit: ", n1)
 			var myJson = map[string]any{
 				"id":      id,
-				"data":    request,
+				"data":    saved_request,
 				"dstaddr": dstaddr,
 				"dstport": dstport,
 				"type":    "first",
@@ -139,13 +151,6 @@ func handleClient(client net.Conn, transport *http.Transport) {
 			requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
 			requestBody.Header.Set("Content-Type", "application/json")
 			requestBody.Host = "script.google.com"
-			client1 := &http.Client{
-				Timeout:   30 * time.Second,
-				Transport: transport,
-				CheckRedirect: func(req *http.Request, via []*http.Request) error {
-					return http.ErrUseLastResponse
-				},
-			}
 			resp, error1 := client1.Do(requestBody)
 
 			if error1 != nil {
@@ -156,7 +161,6 @@ func handleClient(client net.Conn, transport *http.Transport) {
 			location := resp.Header.Get("location")
 			somepart := location[36:]
 
-			resp.Body.Close()
 			secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
 
 			secondReq.Host = "script.googleusercontent.com"
@@ -166,54 +170,69 @@ func handleClient(client net.Conn, transport *http.Transport) {
 				break
 			}
 			bytesa, _ := io.ReadAll(resp.Body)
-			l("fuckingbody response", string(bytesa))
+			var jsoned map[string]any
+			json.Unmarshal(bytesa, &jsoned)
+			if string(bytesa) == "null" {
+				for {
+					client.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+					_, e := client.Read(buffer[:])
+					client.SetReadDeadline(time.Time{})
+					if e != nil && !strings.Contains(e.Error(), "timeout") {
+						myJson = map[string]any{
+							"id":   id,
+							"type": "close",
+						}
+						jsonData, _ := json.Marshal(myJson)
+						requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+						requestBody.Header.Set("Content-Type", "application/json")
+						requestBody.Host = "script.google.com"
+						_, error1 = client1.Do(requestBody)
+						if error1 != nil {
+							l("fucking problem with POSTing an asshole", err)
+						}
+						break
+					}
+					l("this happened for", id) // this means lpop result wasnt ready at that moment, so instead of sending request again to notify gListener we send nextRequest at this moment
+					var myJson = map[string]any{
+						"id":   id,
+						"type": "next",
+					}
+					jsonData, _ = json.Marshal(myJson)
 
-			packet, _ := base64.StdEncoding.DecodeString(string(bytesa))
-			client.Write(packet)
-			resp.Body.Close()
+					requestBody, err = http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+					requestBody.Header.Set("Content-Type", "application/json")
+					requestBody.Host = "script.google.com"
+					resp, error1 = client1.Do(requestBody)
 
-			for {
-				_, e := client.Read(buffer[:])
-				if e != nil {
-					l("Client socket is closed")
-					client.Close()
-					break
+					if error1 != nil {
+						l("fucking problem with POSTing an asshole", err)
+						break
+					}
+
+					location = resp.Header.Get("location")
+					somepart = location[36:]
+
+					secondReq, err = http.NewRequest("GET", "https://www.google.com"+somepart, nil)
+
+					secondReq.Host = "script.googleusercontent.com"
+					resp, error1 = client1.Do(secondReq)
+					if error1 != nil {
+						l("fucking problem with GETing an asshole", err)
+						break
+					}
+					bytesa, _ = io.ReadAll(resp.Body)
+					if string(bytesa) != "null" {
+						l("it is!")
+						json.Unmarshal(bytesa, &jsoned)
+					} else {
+						l("didnt work..") // i dont i should break or continue?
+						continue
+					}
+					packet, _ := base64.StdEncoding.DecodeString(jsoned["data"].(string))
+					l("id:", id, ",seq:", jsoned["seq"])
+					client.Write(packet)
+					resp.Body.Close()
 				}
-				client.SetReadDeadline(time.Time{})
-
-				myJson = map[string]any{
-					"id":   id,
-					"type": "next",
-				}
-				jsonData, _ := json.Marshal(myJson)
-				requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-				requestBody.Header.Set("Content-Type", "application/json")
-				requestBody.Host = "script.google.com"
-				resp, error1 := client1.Do(requestBody)
-
-				if error1 != nil {
-					l("fucking problem with POSTing an asshole", err)
-					break
-				}
-
-				location := resp.Header.Get("location")
-				somepart := location[36:]
-				resp.Body.Close()
-				secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
-
-				secondReq.Host = "script.googleusercontent.com"
-				resp, error1 = client1.Do(secondReq)
-				bea, _ := io.ReadAll(resp.Body)
-				if error1 != nil || string(bea) == "null" {
-					l("fucking problem with GETing an asshole OR end", err, string(bea))
-					continue
-				}
-				l("fuckingbody response", string(bea))
-
-				packet, _ := base64.StdEncoding.DecodeString(string(bea))
-				client.Write(packet)
-				resp.Body.Close()
-				client.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
 			}
 		}
 	}
@@ -235,16 +254,43 @@ func main() {
 			ServerName: "www.google.com",
 		},
 	}
+	client1 := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: myTransport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
 	log.Println("Listening on 12345")
 	listener, error := net.Listen("tcp", "0.0.0.0:12345")
 	if error != nil {
 		log.Println(`Port is in use maybe`, error)
 	}
+	go func() {
+		signalc, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer stop()
+		<-signalc.Done()
+		l("Sending fullclose signal to receiver with google sni...")
+		myJson := map[string]any{
+			"type": "fullclose",
+		}
+		jsonData, _ := json.Marshal(myJson)
+		requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+		requestBody.Header.Set("Content-Type", "application/json")
+		requestBody.Host = "script.google.com"
+		_, error1 := client1.Do(requestBody)
+		if error1 != nil {
+			l("fucking problem with POSTing an asshole", err)
+		}
+		l("Done")
+		syscall.Exit(0)
+	}()
+
 	for {
 		client, _ := listener.Accept()
 		go func() {
-			handleClient(client, myTransport)
+			handleClient(client, client1)
 		}()
 	}
 }
