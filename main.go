@@ -14,7 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os/signal"
-	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -108,77 +108,20 @@ func handleClient(client net.Conn, client1 *http.Client) {
 		defer client.Close()
 
 		buffer := make([]byte, 16384) // 16kb
+		_ = buffer
 		id := uuid.New().String()
 		l("fucking id", id)
-		var n1 int
-		var saved_request string
-		var error1 error
-		for {
-			l("maybe its blocking, why it cant capture the request?")
-			client.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-			n1, error1 = client.Read(buffer[:])
-			if error1 != nil {
-				if error1 == io.EOF {
-					l("End of stream", error1)
-					break
-				} else if strings.Contains(error1.Error(), "timeout") {
-					l("timeout", error1)
-					saved_request = ""
-				} else {
-					l(error1.Error()) // couldn't receive request
-					break
-				}
-			}
-			if n1 == 0 {
-				l("buffer is empty now we use saved_buffer")
-			} else {
-				request := base64.StdEncoding.EncodeToString(buffer[:n1])
-				l("Is request really different?", request)
-				saved_request = request
-			}
+		// write goroutine
 
-			// encode client chunk
-			l("User request: ", saved_request, "n for the newest commit: ", n1)
-			var myJson = map[string]any{
-				"id":      id,
-				"data":    saved_request,
-				"dstaddr": dstaddr,
-				"dstport": dstport,
-				"type":    "first",
-			}
-			jsonData, _ := json.Marshal(myJson)
+		var wg sync.WaitGroup
 
-			requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-			requestBody.Header.Set("Content-Type", "application/json")
-			requestBody.Host = "script.google.com"
-			resp, error1 := client1.Do(requestBody)
-
-			if error1 != nil {
-				l("fucking problem with POSTing an asshole", err)
-				break
-			}
-
-			location := resp.Header.Get("location")
-			somepart := location[36:]
-
-			secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
-
-			secondReq.Host = "script.googleusercontent.com"
-			resp, error1 = client1.Do(secondReq)
-			if error1 != nil {
-				l("fucking problem with GETing an asshole", err)
-				break
-			}
-			bytesa, _ := io.ReadAll(resp.Body)
-			var jsoned map[string]any
-			json.Unmarshal(bytesa, &jsoned)
-			if string(bytesa) == "null" {
-				for {
-					client.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-					_, e := client.Read(buffer[:])
-					client.SetReadDeadline(time.Time{})
-					if e != nil && !strings.Contains(e.Error(), "timeout") {
-						myJson = map[string]any{
+		wg.Go(func() {
+			for {
+				n1, error := client.Read(buffer[:])
+				if error != nil {
+					if error == io.EOF {
+						l("End of file")
+						myJson := map[string]any{
 							"id":   id,
 							"type": "close",
 						}
@@ -186,55 +129,98 @@ func handleClient(client net.Conn, client1 *http.Client) {
 						requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
 						requestBody.Header.Set("Content-Type", "application/json")
 						requestBody.Host = "script.google.com"
-						_, error1 = client1.Do(requestBody)
+						resp, error1 := client1.Do(requestBody)
 						if error1 != nil {
 							l("fucking problem with POSTing an asshole", err)
 						}
-						break
+						resp.Body.Close()
 					}
-					l("this happened for", id) // this means lpop result wasnt ready at that moment, so instead of sending request again to notify gListener we send nextRequest at this moment
-					var myJson = map[string]any{
-						"id":   id,
-						"type": "next",
-					}
-					jsonData, _ = json.Marshal(myJson)
-
-					requestBody, err = http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-					requestBody.Header.Set("Content-Type", "application/json")
-					requestBody.Host = "script.google.com"
-					resp, error1 = client1.Do(requestBody)
-
-					if error1 != nil {
-						l("fucking problem with POSTing an asshole", err)
-						break
-					}
-
-					location = resp.Header.Get("location")
-					somepart = location[36:]
-
-					secondReq, err = http.NewRequest("GET", "https://www.google.com"+somepart, nil)
-
-					secondReq.Host = "script.googleusercontent.com"
-					resp, error1 = client1.Do(secondReq)
-					if error1 != nil {
-						l("fucking problem with GETing an asshole", err)
-						break
-					}
-					bytesa, _ = io.ReadAll(resp.Body)
-					if string(bytesa) != "null" {
-						l("it is!")
-						json.Unmarshal(bytesa, &jsoned)
-					} else {
-						l("didnt work..") // i dont i should break or continue?
-						continue
-					}
-					packet, _ := base64.StdEncoding.DecodeString(jsoned["data"].(string))
-					l("id:", id, ",seq:", jsoned["seq"])
-					client.Write(packet)
-					resp.Body.Close()
+					wg.Done()
+					break
 				}
+				request := base64.StdEncoding.EncodeToString(buffer[:n1])
+				var myJson = map[string]any{
+					"id":      id,
+					"dstaddr": dstaddr,
+					"dstport": dstport,
+					"data":    request,
+					"type":    "first",
+				}
+				jsonData, _ := json.Marshal(myJson)
+
+				requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+				requestBody.Header.Set("Content-Type", "application/json")
+				requestBody.Host = "script.google.com"
+				resp, error1 := client1.Do(requestBody)
+				if resp == nil {
+					break
+				}
+				l("ass response of POST:", resp)
+				l("body response of POST:", resp.Body)
+				if error1 != nil {
+					l("fucking problem with POSTing an asshole", err)
+					break
+				}
+				resp.Body.Close()
 			}
-		}
+		})
+
+		wg.Go(func() {
+			for {
+				var myJson = map[string]any{
+					"id":   id,
+					"type": "next",
+				}
+				var jsoned map[string]any
+				jsonData, _ := json.Marshal(myJson)
+
+				requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+				requestBody.Header.Set("Content-Type", "application/json")
+				requestBody.Host = "script.google.com"
+				resp, error1 := client1.Do(requestBody)
+				if resp == nil {
+					break
+				}
+				l("dick response of POST:", resp)
+				l("body response of POST:", resp.Body)
+				bytesa, _ := io.ReadAll(resp.Body)
+				l("stringfied body response of POST:", string(bytesa))
+				if error1 != nil {
+					l("fucking problem with POSTing an asshole", err)
+					break
+				}
+
+				location := resp.Header.Get("location")
+				somepart := location[36:]
+
+				secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
+
+				secondReq.Host = "script.googleusercontent.com"
+				resp, error1 = client1.Do(secondReq)
+				l("response of GET:", resp)
+				l("response body of GET:", resp.Body)
+				if error1 != nil {
+					l("fucking problem with GETing an asshole", err)
+					break
+				}
+				bytesa, _ = io.ReadAll(resp.Body)
+				l("stringifed response body of GET:", string(bytesa))
+				if string(bytesa) != "null" {
+					l("this isn't null which means we can encode it to json maybe")
+					json.Unmarshal(bytesa, &jsoned)
+				} else {
+					l("response chunk is null whiich means we should retry or maybe?") // i dont i should break or continue?
+					continue
+				}
+				l("we passed the whole shit now we have the chunk of response")
+				packet, _ := base64.StdEncoding.DecodeString(jsoned["data"].(string))
+				l("id:", id, ",seq:", jsoned["seq"])
+				client.Write(packet)
+				resp.Body.Close()
+			}
+		})
+
+		wg.Wait()
 	}
 
 }
