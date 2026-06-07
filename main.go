@@ -111,9 +111,9 @@ func handleClient(client net.Conn, client1 *http.Client) {
 		_ = buffer
 		id := uuid.New().String()
 		l("fucking id", id)
-		// write goroutine
 
 		var wg sync.WaitGroup
+		cChan := make(chan any, 1)
 
 		wg.Go(func() {
 			for {
@@ -135,7 +135,7 @@ func handleClient(client net.Conn, client1 *http.Client) {
 						}
 						resp.Body.Close()
 					}
-					wg.Done()
+					close(cChan)
 					break
 				}
 				request := base64.StdEncoding.EncodeToString(buffer[:n1])
@@ -144,7 +144,7 @@ func handleClient(client net.Conn, client1 *http.Client) {
 					"dstaddr": dstaddr,
 					"dstport": dstport,
 					"data":    request,
-					"type":    "first",
+					"type":    "client_chunks",
 				}
 				jsonData, _ := json.Marshal(myJson)
 
@@ -165,61 +165,65 @@ func handleClient(client net.Conn, client1 *http.Client) {
 			}
 		})
 
-		wg.Go(func() {
-			for {
-				var myJson = map[string]any{
-					"id":   id,
-					"type": "next",
-				}
-				var jsoned map[string]any
-				jsonData, _ := json.Marshal(myJson)
+		select {
+		case <-cChan:
+			break
+		default:
+			wg.Go(func() {
+				for {
+					var myJson = map[string]any{
+						"id":   id,
+						"type": "receiver_chunks",
+					}
+					var jsoned map[string]any
+					jsonData, _ := json.Marshal(myJson)
 
-				requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-				requestBody.Header.Set("Content-Type", "application/json")
-				requestBody.Host = "script.google.com"
-				resp, error1 := client1.Do(requestBody)
-				if resp == nil {
-					break
-				}
-				l("dick response of POST:", resp)
-				l("body response of POST:", resp.Body)
-				bytesa, _ := io.ReadAll(resp.Body)
-				l("stringfied body response of POST:", string(bytesa))
-				if error1 != nil {
-					l("fucking problem with POSTing an asshole", err)
-					break
-				}
+					requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+					requestBody.Header.Set("Content-Type", "application/json")
+					requestBody.Host = "script.google.com"
+					resp, error1 := client1.Do(requestBody)
+					if resp == nil {
+						break
+					}
+					l("dick response of POST:", resp)
+					l("body response of POST:", resp.Body)
+					bytesa, _ := io.ReadAll(resp.Body)
+					l("stringfied body response of POST:", string(bytesa))
+					if error1 != nil {
+						l("fucking problem with POSTing an asshole", err)
+						break
+					}
 
-				location := resp.Header.Get("location")
-				somepart := location[36:]
+					location := resp.Header.Get("location")
+					somepart := location[36:]
 
-				secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
+					secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
 
-				secondReq.Host = "script.googleusercontent.com"
-				resp, error1 = client1.Do(secondReq)
-				l("response of GET:", resp)
-				l("response body of GET:", resp.Body)
-				if error1 != nil {
-					l("fucking problem with GETing an asshole", err)
-					break
+					secondReq.Host = "script.googleusercontent.com"
+					resp, error1 = client1.Do(secondReq)
+					l("response of GET:", resp)
+					l("response body of GET:", resp.Body)
+					if error1 != nil {
+						l("fucking problem with GETing an asshole", err)
+						break
+					}
+					bytesa, _ = io.ReadAll(resp.Body)
+					l("stringifed response body of GET:", string(bytesa))
+					if string(bytesa) != "null" {
+						l("this isn't null which means we can encode it to json maybe")
+						json.Unmarshal(bytesa, &jsoned)
+					} else {
+						l("response chunk is null whiich means we should retry or maybe?") // i dont i should break or continue?
+						continue
+					}
+					l("we passed the whole shit now we have the chunk of response")
+					packet, _ := base64.StdEncoding.DecodeString(jsoned["data"].(string))
+					l("id:", id, ",seq:", jsoned["seq"])
+					client.Write(packet)
+					resp.Body.Close()
 				}
-				bytesa, _ = io.ReadAll(resp.Body)
-				l("stringifed response body of GET:", string(bytesa))
-				if string(bytesa) != "null" {
-					l("this isn't null which means we can encode it to json maybe")
-					json.Unmarshal(bytesa, &jsoned)
-				} else {
-					l("response chunk is null whiich means we should retry or maybe?") // i dont i should break or continue?
-					continue
-				}
-				l("we passed the whole shit now we have the chunk of response")
-				packet, _ := base64.StdEncoding.DecodeString(jsoned["data"].(string))
-				l("id:", id, ",seq:", jsoned["seq"])
-				client.Write(packet)
-				resp.Body.Close()
-			}
-		})
-
+			})
+		}
 		wg.Wait()
 	}
 
