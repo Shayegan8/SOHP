@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -13,8 +14,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -32,6 +33,8 @@ type SockRead struct {
 	n   int
 	err any
 }
+
+var sockets map[string]net.Conn = map[string]net.Conn{}
 
 func handleClient(client net.Conn, client1 *http.Client) {
 
@@ -107,38 +110,27 @@ func handleClient(client net.Conn, client1 *http.Client) {
 		log.Println("the address", dst)
 		defer client.Close()
 
-		buffer := make([]byte, 16384) // 16kb
-		_ = buffer
 		id := uuid.New().String()
+		sockets[id] = client
 		l("fucking id", id)
 
-		var wg sync.WaitGroup
 		cChan := make(chan any, 1)
-
-		wg.Go(func() {
+		now := time.Now()
+		go func() {
 			for {
-				n1, error := client.Read(buffer[:])
-				if error != nil {
-					if error == io.EOF {
-						l("End of file")
-						myJson := map[string]any{
-							"id":   id,
-							"type": "close",
-						}
-						jsonData, _ := json.Marshal(myJson)
-						requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-						requestBody.Header.Set("Content-Type", "application/json")
-						requestBody.Host = "script.google.com"
-						resp, error1 := client1.Do(requestBody)
-						if error1 != nil {
-							l("fucking problem with POSTing an asshole", err)
-						}
-						resp.Body.Close()
-					}
+				reader := bufio.NewReader(client)
+				reader.Peek(1)
+				data, err := reader.Peek(reader.Buffered())
+				l("Request size is: ", len(data))
+				reader.Discard(len(data)) // this not required
+				if string(data) == "" {
+					l("time took is:", time.Since(now))
+					l("End of file")
 					close(cChan)
+					l("Close happened")
 					break
 				}
-				request := base64.StdEncoding.EncodeToString(buffer[:n1])
+				request := base64.StdEncoding.EncodeToString(data)
 				var myJson = map[string]any{
 					"id":      id,
 					"dstaddr": dstaddr,
@@ -163,74 +155,99 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				}
 				resp.Body.Close()
 			}
-		})
+		}()
 
-		select {
-		case <-cChan:
-			break
-		default:
-			wg.Go(func() {
-				for {
-					var myJson = map[string]any{
-						"id":   id,
-						"type": "receiver_chunks",
-					}
-					var jsoned map[string]any
-					jsonData, _ := json.Marshal(myJson)
-
-					requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-					requestBody.Header.Set("Content-Type", "application/json")
-					requestBody.Host = "script.google.com"
-					resp, error1 := client1.Do(requestBody)
-					if resp == nil {
-						break
-					}
-					l("dick response of POST:", resp)
-					l("body response of POST:", resp.Body)
-					bytesa, _ := io.ReadAll(resp.Body)
-					l("stringfied body response of POST:", string(bytesa))
-					if error1 != nil {
-						l("fucking problem with POSTing an asshole", err)
-						break
-					}
-
-					location := resp.Header.Get("location")
-					somepart := location[36:]
-
-					secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
-
-					secondReq.Host = "script.googleusercontent.com"
-					resp, error1 = client1.Do(secondReq)
-					l("response of GET:", resp)
-					l("response body of GET:", resp.Body)
-					if error1 != nil {
-						l("fucking problem with GETing an asshole", err)
-						break
-					}
-					bytesa, _ = io.ReadAll(resp.Body)
-					l("stringifed response body of GET:", string(bytesa))
-					if string(bytesa) != "null" {
-						l("this isn't null which means we can encode it to json maybe")
-						json.Unmarshal(bytesa, &jsoned)
-					} else {
-						l("response chunk is null whiich means we should retry or maybe?") // i dont i should break or continue?
-						continue
-					}
-					l("we passed the whole shit now we have the chunk of response")
-					packet, _ := base64.StdEncoding.DecodeString(jsoned["data"].(string))
-					l("id:", id, ",seq:", jsoned["seq"])
-					client.Write(packet)
-					resp.Body.Close()
+	loop:
+		for {
+			select {
+			case <-cChan:
+				break loop
+			default:
+				nowi := time.Now()
+				var myJson = map[string]any{
+					"id":   id,
+					"type": "receiver_chunks",
 				}
-			})
+				var arrstr = []string{}
+				jsonData, _ := json.Marshal(myJson)
+
+				requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+				requestBody.Header.Set("Content-Type", "application/json")
+				requestBody.Host = "script.google.com"
+				resp, error1 := client1.Do(requestBody)
+				if resp == nil {
+					l("this happened but why? connection issues?", error1)
+					break
+				}
+				l("dick response of POST:", resp)
+				l("body response of POST:", resp.Body)
+				bytesa, _ := io.ReadAll(resp.Body)
+				l("stringfied body response of POST:", string(bytesa))
+				if error1 != nil {
+					l("fucking problem with POSTing an asshole", err)
+					break
+				}
+
+				location := resp.Header.Get("location")
+				somepart := location[36:]
+
+				secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
+
+				secondReq.Host = "script.googleusercontent.com"
+				resp, error1 = client1.Do(secondReq)
+				l("response of GET:", resp)
+				l("response body of GET:", resp.Body)
+				if error1 != nil {
+					l("fucking problem with GETing an asshole", err)
+					break
+				}
+				bytesa, _ = io.ReadAll(resp.Body)
+				l("stringifed response body of GET:", string(bytesa))
+				if string(bytesa) != "null" {
+					l("this isn't null which means we can encode it to json maybe")
+					json.Unmarshal(bytesa, &arrstr)
+				} else {
+					l("response chunk is null whiich means we should retry or maybe?") // i dont i should break or continue?
+					continue
+				}
+				l("we passed the whole shit now we have the chunk of response")
+				l("It tooken", time.Since(nowi))
+				nowi2 := time.Now()
+				for _, data := range arrstr {
+					packet, _ := base64.StdEncoding.DecodeString(data)
+					l("id:", id)
+					client.Write(packet)
+				}
+				l("After iteration it tooken", time.Since(nowi2))
+				resp.Body.Close()
+
+			}
 		}
-		wg.Wait()
 	}
 
 }
 
 func main() {
 	json.Unmarshal(configFile, &configMap)
+
+	args := os.Args
+	if len(args) > 1 {
+		switch args[1] {
+		case "--help", "-h":
+			l("StupidSNIUpstashProxy - By Shayegan8\n" +
+				"--resolve, resolve - It resolves dnses of www.google.com destination and measures their speed\n" +
+				"--help, -h - This command")
+			return
+		case "--resolve", "-r":
+			ips, errori := net.DefaultResolver.LookupHost(context.Background(), "www.google.com")
+			if errori != nil {
+				l("can't resolve google")
+				return
+			}
+			l(ips)
+			return
+		}
+	}
 	dialer := &net.Dialer{
 		Timeout: 30 * time.Second,
 	}

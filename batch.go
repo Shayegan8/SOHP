@@ -23,46 +23,27 @@ type MapBatch struct {
 }
 
 type Batch struct {
-	mutex      sync.Mutex
-	b_size     int64
-	e_size     atomic.Int64
-	runnedOnce bool
+	mutex  sync.Mutex
+	once   sync.Once
+	e_size atomic.Int64
 }
 
 func crt_mbatch() *MapBatch {
 	return &MapBatch{elements: map[string]any{}}
 }
 
-func crt_qbatch() *QueueBatch {
-	return &QueueBatch{queue: list.New()}
+func crt_batch() *Batch {
+	return &Batch{}
 }
 
-func crt_batch(b_size int64) *Batch {
-	return &Batch{b_size: b_size, runnedOnce: false}
-}
+/*
+we send requests with a batch and checking if theres more request then we push, if we had more than 30 batchs and there was more requests in we put those requests in workin batches, so batches can grow or get smaller or completly destroyed
+*/
 
-func (batch *Batch) add_elmnt(queueBatch *QueueBatch, mapBatch *MapBatch, element Element, timeout int, callback func()) {
-	queueBatch.mutex.Lock()
-	if batch.e_size.Load() == batch.b_size {
-		// move this batch to fulled ones
-		// we use a batch thats not stuffed
-		queueBatch.queue.PushBack(element)
-		return
-	}
-
-	for batch.e_size.Load() != batch.b_size && queueBatch.queue.Len() != 0 {
-		front := queueBatch.queue.Front()
-		mapBatch.mutex.Lock()
-		mapBatch.elements[front.Value.(Element).id] = front.Value.(Element).element
-		mapBatch.mutex.Unlock()
-		batch.e_size.Add(1)
-		queueBatch.queue.Remove(front)
-	}
-
-	capturedAtom := batch.e_size.Load()
-	queueBatch.mutex.Unlock()
+func (batch *Batch) add_elmnt(mapBatch *MapBatch, element Element, timeout int, callback func()) {
 
 	mapBatch.mutex.Lock()
+	capturedLen := len(mapBatch.elements)
 	mapBatch.elements[element.id] = element.element
 	mapBatch.mutex.Unlock()
 
@@ -75,7 +56,7 @@ func (batch *Batch) add_elmnt(queueBatch *QueueBatch, mapBatch *MapBatch, elemen
 
 	go func() {
 		for range ticker.C {
-			if capturedAtom != batch.e_size.Load() {
+			if int64(capturedLen) != batch.e_size.Load() {
 				timeouta.Reset(time.Duration(timeout) * time.Millisecond)
 			}
 		}
@@ -90,10 +71,7 @@ func (batch *Batch) add_elmnt(queueBatch *QueueBatch, mapBatch *MapBatch, elemen
 
 	<-ready
 	batch.mutex.Lock()
-	if !batch.runnedOnce {
-		callback()
-		batch.runnedOnce = true
-	}
+	go batch.once.Do(callback)
 	batch.mutex.Unlock()
 
 }
