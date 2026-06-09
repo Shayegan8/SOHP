@@ -29,11 +29,6 @@ var configMap map[string]any
 //go:embed config.json
 var configFile []byte
 
-type SockRead struct {
-	n   int
-	err any
-}
-
 var sockets map[string]net.Conn = map[string]net.Conn{}
 
 func handleClient(client net.Conn, client1 *http.Client) {
@@ -120,12 +115,27 @@ func handleClient(client net.Conn, client1 *http.Client) {
 			for {
 				reader := bufio.NewReader(client)
 				reader.Peek(1)
-				data, err := reader.Peek(reader.Buffered())
+				data, _ := reader.Peek(reader.Buffered())
 				l("Request size is: ", len(data))
 				reader.Discard(len(data)) // this not required
 				if string(data) == "" {
 					l("time took is:", time.Since(now))
 					l("End of file")
+					myJson := map[string]any{
+						"id":   id,
+						"type": "close",
+					}
+					jsonData, _ := json.Marshal(myJson)
+					requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+					requestBody.Header.Set("Content-Type", "application/json")
+					requestBody.Host = "script.google.com"
+					resp, error1 := client1.Do(requestBody)
+					if error1 != nil {
+						l("fucking problem with POSTing an asshole", error1)
+					}
+
+					resp.Body.Close()
+					l("Closing")
 					close(cChan)
 					l("Close happened")
 					break
@@ -140,7 +150,7 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				}
 				jsonData, _ := json.Marshal(myJson)
 
-				requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+				requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
 				requestBody.Header.Set("Content-Type", "application/json")
 				requestBody.Host = "script.google.com"
 				resp, error1 := client1.Do(requestBody)
@@ -150,7 +160,7 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				l("ass response of POST:", resp)
 				l("body response of POST:", resp.Body)
 				if error1 != nil {
-					l("fucking problem with POSTing an asshole", err)
+					l("fucking problem with POSTing an asshole", error1)
 					break
 				}
 				resp.Body.Close()
@@ -171,7 +181,7 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				var arrstr = []string{}
 				jsonData, _ := json.Marshal(myJson)
 
-				requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+				requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
 				requestBody.Header.Set("Content-Type", "application/json")
 				requestBody.Host = "script.google.com"
 				resp, error1 := client1.Do(requestBody)
@@ -184,21 +194,25 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				bytesa, _ := io.ReadAll(resp.Body)
 				l("stringfied body response of POST:", string(bytesa))
 				if error1 != nil {
-					l("fucking problem with POSTing an asshole", err)
+					l("fucking problem with POSTing an asshole", error1)
 					break
 				}
 
 				location := resp.Header.Get("location")
+				if location == "" {
+					l("MAYBE THIS IS RATE LIMIT BUT WE BREAK THE SHIT OUT OF THIS")
+					break
+				}
 				somepart := location[36:]
 
-				secondReq, err := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
+				secondReq, _ := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
 
 				secondReq.Host = "script.googleusercontent.com"
 				resp, error1 = client1.Do(secondReq)
 				l("response of GET:", resp)
 				l("response body of GET:", resp.Body)
 				if error1 != nil {
-					l("fucking problem with GETing an asshole", err)
+					l("fucking problem with GETing an asshole", error1)
 					break
 				}
 				bytesa, _ = io.ReadAll(resp.Body)
@@ -211,7 +225,8 @@ func handleClient(client net.Conn, client1 *http.Client) {
 					continue
 				}
 				l("we passed the whole shit now we have the chunk of response")
-				l("It tooken", time.Since(nowi))
+				rtt_perreq := time.Since(nowi).Milliseconds()
+				l("It tooken", rtt_perreq)
 				nowi2 := time.Now()
 				for _, data := range arrstr {
 					packet, _ := base64.StdEncoding.DecodeString(data)
@@ -220,7 +235,25 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				}
 				l("After iteration it tooken", time.Since(nowi2))
 				resp.Body.Close()
+				go func() {
+					l("Sending fucking rtt")
+					var myJson = map[string]any{
+						"id":   id,
+						"rtt":  rtt_perreq,
+						"type": "rtt",
+					}
+					jsonData, _ := json.Marshal(myJson)
 
+					requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+					requestBody.Header.Set("Content-Type", "application/json")
+					requestBody.Host = "script.google.com"
+					resp, error1 := client1.Do(requestBody)
+					if resp == nil {
+						l("aaa this happened but why? connection issues?", error1)
+					}
+					resp.Body.Close()
+					l("shit jerk")
+				}()
 			}
 		}
 	}
@@ -238,7 +271,7 @@ func main() {
 				"--resolve, resolve - It resolves dnses of www.google.com destination and measures their speed\n" +
 				"--help, -h - This command")
 			return
-		case "--resolve", "-r":
+		case "--resolve", "-r": // i'll use someone's else  list
 			ips, errori := net.DefaultResolver.LookupHost(context.Background(), "www.google.com")
 			if errori != nil {
 				l("can't resolve google")
@@ -283,12 +316,12 @@ func main() {
 			"type": "fullclose",
 		}
 		jsonData, _ := json.Marshal(myJson)
-		requestBody, err := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+		requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
 		requestBody.Header.Set("Content-Type", "application/json")
 		requestBody.Host = "script.google.com"
 		_, error1 := client1.Do(requestBody)
 		if error1 != nil {
-			l("fucking problem with POSTing an asshole", err)
+			l("fucking problem with POSTing an asshole", error1)
 		}
 		l("Done")
 		syscall.Exit(0)
