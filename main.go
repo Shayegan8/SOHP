@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,11 +30,30 @@ var configMap map[string]any
 //go:embed config.json
 var configFile []byte
 
-var sockets map[string]net.Conn = map[string]net.Conn{}
+type SockDetail struct {
+	socket  net.Conn
+	dstaddr string
+	dstport uint16
+}
+
+var sockets map[string]SockDetail = map[string]SockDetail{}
+
+type Request struct {
+	id      string
+	request string
+}
+
+type Requests struct {
+	mutex    sync.Mutex
+	requests []Request
+}
+
+var requests Requests = Requests{requests: []Request{}}
 
 func handleClient(client net.Conn, client1 *http.Client) {
 
 	sbreq := make([]byte, 8) //this is to much even, literally all of this request packets
+
 	n, err := client.Read(sbreq)
 	if err != nil {
 		return
@@ -106,7 +126,7 @@ func handleClient(client net.Conn, client1 *http.Client) {
 		defer client.Close()
 
 		id := uuid.New().String()
-		sockets[id] = client
+		sockets[id] = SockDetail{client, dstaddr, dstport}
 		l("fucking id", id)
 
 		cChan := make(chan any, 1)
@@ -116,9 +136,11 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				reader := bufio.NewReader(client)
 				reader.Peek(1)
 				data, _ := reader.Peek(reader.Buffered())
-				l("Request size is: ", len(data))
+				l("Request size is:", len(data))
+				l("Encoded Request:", base64.StdEncoding.EncodeToString(data))
 				reader.Discard(len(data)) // this not required
-				if string(data) == "" {
+				if string(data) == "" {   // as i tested i never see err
+					close(cChan)
 					l("time took is:", time.Since(now))
 					l("End of file")
 					myJson := map[string]any{
@@ -134,36 +156,16 @@ func handleClient(client net.Conn, client1 *http.Client) {
 						l("fucking problem with POSTing an asshole", error1)
 					}
 
-					resp.Body.Close()
 					l("Closing")
-					close(cChan)
+					resp.Body.Close()
 					l("Close happened")
 					break
 				}
 				request := base64.StdEncoding.EncodeToString(data)
-				var myJson = map[string]any{
-					"id":      id,
-					"dstaddr": dstaddr,
-					"dstport": dstport,
-					"data":    request,
-					"type":    "client_chunks",
-				}
-				jsonData, _ := json.Marshal(myJson)
+				l("request encoded")
+				requests.requests = append(requests.requests, Request{id, request})
+				l("request pushed")
 
-				requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-				requestBody.Header.Set("Content-Type", "application/json")
-				requestBody.Host = "script.google.com"
-				resp, error1 := client1.Do(requestBody)
-				if resp == nil {
-					break
-				}
-				l("ass response of POST:", resp)
-				l("body response of POST:", resp.Body)
-				if error1 != nil {
-					l("fucking problem with POSTing an asshole", error1)
-					break
-				}
-				resp.Body.Close()
 			}
 		}()
 
@@ -171,27 +173,53 @@ func handleClient(client net.Conn, client1 *http.Client) {
 		for {
 			select {
 			case <-cChan:
+				l("if this got notified")
 				break loop
 			default:
+				select {
+				case <-cChan:
+					break loop
+				default:
+				}
 				nowi := time.Now()
 				var myJson = map[string]any{
-					"id":   id,
 					"type": "receiver_chunks",
 				}
-				var arrstr = []string{}
+				l("at least this got a pussy")
 				jsonData, _ := json.Marshal(myJson)
 
 				requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
 				requestBody.Header.Set("Content-Type", "application/json")
 				requestBody.Host = "script.google.com"
+				select {
+				case <-cChan:
+					break loop
+				default:
+				}
 				resp, error1 := client1.Do(requestBody)
+				select {
+				case <-cChan:
+					break loop
+				default:
+				}
 				if resp == nil {
 					l("this happened but why? connection issues?", error1)
 					break
 				}
 				l("dick response of POST:", resp)
 				l("body response of POST:", resp.Body)
+				select {
+				case <-cChan:
+					break loop
+				default:
+				}
 				bytesa, _ := io.ReadAll(resp.Body)
+				select {
+				case <-cChan:
+					break loop
+				default:
+				}
+
 				l("stringfied body response of POST:", string(bytesa))
 				if error1 != nil {
 					l("fucking problem with POSTing an asshole", error1)
@@ -208,31 +236,59 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				secondReq, _ := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
 
 				secondReq.Host = "script.googleusercontent.com"
+				select {
+				case <-cChan:
+					break loop
+				default:
+				}
+
 				resp, error1 = client1.Do(secondReq)
+				select {
+				case <-cChan:
+					break loop
+				default:
+				}
+
 				l("response of GET:", resp)
 				l("response body of GET:", resp.Body)
 				if error1 != nil {
 					l("fucking problem with GETing an asshole", error1)
 					break
 				}
+				select {
+				case <-cChan:
+					break loop
+				default:
+				}
+
 				bytesa, _ = io.ReadAll(resp.Body)
+
+				select {
+				case <-cChan:
+					break loop
+				default:
+				}
+
 				l("stringifed response body of GET:", string(bytesa))
+				jsoned := map[string][]string{}
 				if string(bytesa) != "null" {
 					l("this isn't null which means we can encode it to json maybe")
-					json.Unmarshal(bytesa, &arrstr)
+					json.Unmarshal(bytesa, &jsoned)
 				} else {
 					l("response chunk is null whiich means we should retry or maybe?") // i dont i should break or continue?
 					continue
 				}
 				l("we passed the whole shit now we have the chunk of response")
 				rtt_perreq := time.Since(nowi).Milliseconds()
-				l("It tooken", rtt_perreq)
 				nowi2 := time.Now()
-				for _, data := range arrstr {
-					packet, _ := base64.StdEncoding.DecodeString(data)
-					l("id:", id)
-					client.Write(packet)
+				for key, value := range jsoned {
+					for _, each := range value {
+						packet, _ := base64.StdEncoding.DecodeString(each)
+						l("id:", id)
+						sockets[key].socket.Write(packet)
+					}
 				}
+				l("It tooken", rtt_perreq)
 				l("After iteration it tooken", time.Since(nowi2))
 				resp.Body.Close()
 				go func() {
@@ -256,6 +312,7 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				}()
 			}
 		}
+		l("Total time, " + time.Since(now).String())
 	}
 
 }
@@ -307,6 +364,73 @@ func main() {
 	if error != nil {
 		log.Println(`Port is in use maybe`, error)
 	}
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+
+	go func() {
+		for {
+			<-ticker.C
+			requests.mutex.Lock()
+			var batch int
+			leni := len(requests.requests)
+			if leni == 0 {
+				requests.mutex.Unlock()
+				continue
+			} else if leni >= 30 {
+				batch = 30
+			} else {
+				batch = leni
+			}
+			ids := map[string]map[string]any{}
+
+			for _, value := range requests.requests[:batch] {
+				detail := sockets[value.id]
+				if _, ok := ids[value.id]; !ok {
+					l("first jerk")
+					ids[value.id] = map[string]any{
+						"data":    []string{value.request},
+						"dstaddr": detail.dstaddr,
+						"dstport": detail.dstport,
+					}
+				} else {
+					l("sec jerk")
+					n := append(ids[value.id]["data"].([]string), value.request)
+					ids[value.id] = map[string]any{
+						"data":    n,
+						"dstaddr": detail.dstaddr,
+						"dstport": detail.dstport,
+					}
+				}
+			}
+			requests.requests = requests.requests[batch:]
+			requests.mutex.Unlock()
+
+			var myJson = map[string]any{
+				"ids":  ids,
+				"type": "client_chunks",
+			}
+
+			l("RESULT: ", ids)
+			jsonData, _ := json.Marshal(myJson)
+
+			requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+			requestBody.Header.Set("Content-Type", "application/json")
+			requestBody.Host = "script.google.com"
+			l("Before resp")
+			resp, error1 := client1.Do(requestBody)
+			if resp == nil {
+				continue
+			}
+			l("ass response of POST:", resp)
+			l("body response of POST:", resp.Body)
+			if error1 != nil {
+				l("fucking problem with POSTing an asshole", error1)
+				continue
+			}
+			resp.Body.Close()
+		}
+	}()
+
 	go func() {
 		signalc, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer stop()
