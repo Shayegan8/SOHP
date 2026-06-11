@@ -138,26 +138,27 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				data, _ := reader.Peek(reader.Buffered())
 				l("Request size is:", len(data))
 				l("Encoded Request:", base64.StdEncoding.EncodeToString(data))
-				reader.Discard(len(data)) // this not required
-				if string(data) == "" {   // as i tested i never see err
+				reader.Discard(len(data))             // this not required
+				if string(data) == "" && err != nil { // as i tested i never see err
 					close(cChan)
 					l("time took is:", time.Since(now))
 					l("End of file")
-					myJson := map[string]any{
-						"id":   id,
-						"type": "close",
-					}
-					jsonData, _ := json.Marshal(myJson)
-					requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-					requestBody.Header.Set("Content-Type", "application/json")
-					requestBody.Host = "script.google.com"
-					resp, error1 := client1.Do(requestBody)
-					if error1 != nil {
-						l("fucking problem with POSTing an asshole", error1)
-					}
+					/*
+						myJson := map[string]any{
+							"id":   id,
+							"type": "close",
+						}
+						jsonData, _ := json.Marshal(myJson)
+						requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+						requestBody.Header.Set("Content-Type", "application/json")
+						requestBody.Host = "script.google.com"
+						resp, error1 := client1.Do(requestBody)
+						if error1 != nil {
+							l("fucking problem with POSTing an asshole", error1)
+						}
 
-					l("Closing")
-					resp.Body.Close()
+						l("Closing")
+						resp.Body.Close()*/
 					l("Close happened")
 					break
 				}
@@ -291,25 +292,6 @@ func handleClient(client net.Conn, client1 *http.Client) {
 				l("It tooken", rtt_perreq)
 				l("After iteration it tooken", time.Since(nowi2))
 				resp.Body.Close()
-				go func() {
-					l("Sending fucking rtt")
-					var myJson = map[string]any{
-						"id":   id,
-						"rtt":  rtt_perreq,
-						"type": "rtt",
-					}
-					jsonData, _ := json.Marshal(myJson)
-
-					requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-					requestBody.Header.Set("Content-Type", "application/json")
-					requestBody.Host = "script.google.com"
-					resp, error1 := client1.Do(requestBody)
-					if resp == nil {
-						l("aaa this happened but why? connection issues?", error1)
-					}
-					resp.Body.Close()
-					l("shit jerk")
-				}()
 			}
 		}
 		l("Total time, " + time.Since(now).String())
@@ -376,8 +358,8 @@ func main() {
 			if leni == 0 {
 				requests.mutex.Unlock()
 				continue
-			} else if leni >= 30 {
-				batch = 30
+			} else if leni >= 200 {
+				batch = 200
 			} else {
 				batch = leni
 			}
@@ -410,7 +392,7 @@ func main() {
 				"type": "client_chunks",
 			}
 
-			l("RESULT: ", ids)
+			l("RESULT:", ids)
 			jsonData, _ := json.Marshal(myJson)
 
 			requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
