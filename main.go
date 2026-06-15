@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -34,21 +36,217 @@ type SockDetail struct {
 	socket  net.Conn
 	dstaddr string
 	dstport uint16
+	chani   chan any
 }
 
 var sockets map[string]SockDetail = map[string]SockDetail{}
+
+var socksmut *sync.Mutex = &sync.Mutex{}
 
 type Request struct {
 	id      string
 	request string
 }
 
-type Requests struct {
-	mutex    sync.Mutex
-	requests []Request
-}
+var reqmut *sync.Mutex = &sync.Mutex{}
 
-var requests Requests = Requests{requests: []Request{}}
+var requests = []Request{}
+
+var bitchmut *sync.Mutex = &sync.Mutex{}
+var bitchs = []any{}
+
+func batch(ticker *time.Ticker, client1 *http.Client) {
+	<-ticker.C
+	reqmut.Lock()
+	var saved_batch = requests[:]
+	leni := len(saved_batch)
+	if leni == 0 {
+		reqmut.Unlock()
+		return
+	} else if leni >= 400 {
+		saved_batch = requests[:1000]
+		requests = requests[:1000]
+		// easy, just push the rest in the next batch, payload for each batch is like n, e.g batch1
+	} else {
+		saved_batch = requests[:]
+	}
+	requests = []Request{}
+	reqmut.Unlock()
+
+	bitchmut.Lock()
+	bitchs = append(bitchs, 'a')
+	l("ATTTENTIOOOOOOOOOOOOOOOON FUCKING JERK IS THIS\n\n\n\n\n\n", len(bitchs))
+
+	if len(bitchs) == 15 {
+		bitchmut.Unlock()
+		ticker2 := time.NewTicker(10 * time.Millisecond)
+		for {
+			<-ticker2.C
+			if len(bitchs) < 15 {
+				l("finallyadawdadaddad")
+				break
+			}
+		}
+	} else {
+		bitchmut.Unlock()
+	}
+	go func() {
+		l("Im here and ready to fuck")
+		ids := map[string]map[string]any{}
+		batch := rand.Intn(90000) + 10000
+		for _, value := range saved_batch {
+			socksmut.Lock()
+			detail := sockets[value.id]
+			socksmut.Unlock()
+			l("PRINT THE DAMN,", ids[value.id])
+			if _, ok := ids[value.id]; !ok {
+				l("first jerk")
+				ids[value.id] = map[string]any{
+					"data":    []string{value.request},
+					"dstaddr": detail.dstaddr,
+					"dstport": detail.dstport,
+				}
+			} else {
+				l("sec jerk")
+				n := append(ids[value.id]["data"].([]string), value.request)
+				ids[value.id] = map[string]any{
+					"data":    n,
+					"dstaddr": ids[value.id]["dstaddr"],
+					"dstport": ids[value.id]["dstport"],
+				}
+			}
+		}
+
+		myJson := map[string]any{
+			"ids":   ids,
+			"batch": batch,
+			"type":  "client_chunks",
+		}
+		l("SENDING TO", batch)
+		l("RESULT:", ids)
+		jsonData, _ := json.Marshal(myJson)
+
+		requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+		requestBody.Header.Set("Content-Type", "application/json")
+		requestBody.Host = "script.google.com"
+		l("Before resp")
+		resp, error1 := client1.Do(requestBody)
+		if resp == nil {
+			return
+		}
+		l("ass response of POST:", resp)
+		l("body response of POST:", resp.Body)
+		if error1 != nil {
+			l("fucking problem with POSTing an asshole", error1)
+			return
+		}
+		resp.Body.Close()
+		// after that listening for response batch
+
+		// RECEIVER
+		nowi := time.Now()
+		myJson = map[string]any{
+			"batch": batch,
+			"type":  "receiver_chunks",
+		}
+		l("GETTING FROM", batch)
+
+		l("at least this got a pussy")
+		jsonData, _ = json.Marshal(myJson)
+
+		requestBody, _ = http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+		requestBody.Header.Set("Content-Type", "application/json")
+		requestBody.Host = "script.google.com"
+		resp, error1 = client1.Do(requestBody)
+		if resp == nil {
+			l("this happened but why? connection issues?", error1)
+			return
+		}
+		l("dick response of POST:", resp)
+		l("body response of POST:", resp.Body)
+
+		bytesa, _ := io.ReadAll(resp.Body)
+
+		l("stringfied body response of POST:", string(bytesa))
+		if error1 != nil {
+			l("fucking problem with POSTing an asshole", error1)
+			return
+		}
+
+		location := resp.Header.Get("location")
+		if location == "" {
+			l("MAYBE THIS IS RATE LIMIT BUT WE BREAK THE SHIT OUT OF THIS")
+			return
+		}
+		somepart := location[36:]
+
+		secondReq, _ := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
+
+		secondReq.Host = "script.googleusercontent.com"
+
+		resp, error1 = client1.Do(secondReq)
+
+		l("response of GET:", resp)
+		if resp == nil {
+			return
+		}
+		l("response body of GET:", resp.Body)
+		if error1 != nil {
+			l("fucking problem with GETing an asshole", error1)
+			return
+		}
+
+		bytesa, _ = io.ReadAll(resp.Body)
+
+		l("stringifed response body of GET:", string(bytesa))
+		jsoned := map[string][]string{}
+		if string(bytesa) != "null" {
+			if strings.Contains(string(bytesa), "done") {
+				l("End of stream sent by receiver")
+				return
+			}
+			l("this isn't null which means we can encode it to json maybe")
+			json.Unmarshal(bytesa, &jsoned)
+		} else {
+			l("response chunk is null whiich means we should retry or maybe?") // i dont i should break or continue?
+			return
+		}
+		l("we passed the whole shit now we have the chunk of response")
+		rtt_perreq := time.Since(nowi).Milliseconds()
+		nowi2 := time.Now()
+		for key, value := range jsoned {
+			for _, each := range value {
+				packet, _ := base64.StdEncoding.DecodeString(each)
+				l("id:", key)
+				socksmut.Lock()
+				if sockets[key].socket != nil { // as i tested before socket when gets closed there's a possibility i get fucked up here
+					sockets[key].socket.Write(packet)
+					socksmut.Unlock()
+				} else {
+					socksmut.Unlock()
+					return
+				}
+			}
+		}
+
+		l("Can i lock?")
+		socksmut.Lock()
+		l("Locked")
+		for _, value := range saved_batch {
+			delete(sockets, value.id)
+		}
+		socksmut.Unlock()
+		l("Unlocked?")
+
+		l("It took", rtt_perreq)
+		l("After iteration it took", time.Since(nowi2))
+		resp.Body.Close()
+		bitchmut.Lock()
+		bitchs = bitchs[:len(bitchs)-1]
+		l("FUCKING JERK AFTEEEEEEEEEEEEEEEEEEEER\n\n\n\n\n\n", len(bitchs))
+		bitchmut.Unlock()
+	}()
+}
 
 func handleClient(client net.Conn, client1 *http.Client) {
 
@@ -126,7 +324,6 @@ func handleClient(client net.Conn, client1 *http.Client) {
 		defer client.Close()
 
 		id := uuid.New().String()
-		sockets[id] = SockDetail{client, dstaddr, dstport}
 		l("fucking id", id)
 
 		now := time.Now()
@@ -136,32 +333,19 @@ func handleClient(client net.Conn, client1 *http.Client) {
 			data, _ := reader.Peek(reader.Buffered())
 			l("Request size is:", len(data))
 			l("Encoded Request:", base64.StdEncoding.EncodeToString(data))
+			socksmut.Lock()
+			sockets[id] = SockDetail{client, dstaddr, dstport, make(chan any, 1)}
+			socksmut.Unlock()
 			reader.Discard(len(data)) // this not required
-			if string(data) == "" {   // as i tested i never see err
+			if len(data) == 0 {       // as i tested i never see err
 				l("time took is:", time.Since(now))
-				l("End of file")
-				myJson := map[string]any{
-					"id":   id,
-					"type": "close",
-				}
-				jsonData, _ := json.Marshal(myJson)
-				requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-				requestBody.Header.Set("Content-Type", "application/json")
-				requestBody.Host = "script.google.com"
-				resp, error1 := client1.Do(requestBody)
-				if error1 != nil {
-					l("fucking problem with POSTing an asshole", error1)
-					break
-				}
-
-				l("Closing")
-				resp.Body.Close()
-				l("Close happened")
 				break
 			}
 			request := base64.StdEncoding.EncodeToString(data)
 			l("request encoded")
-			requests.requests = append(requests.requests, Request{id, request})
+			reqmut.Lock()
+			requests = append(requests, Request{id, request})
+			reqmut.Unlock()
 			l("request pushed")
 		}
 		l("Total time, " + time.Since(now).String())
@@ -219,160 +403,11 @@ func main() {
 
 	ticker := time.NewTicker(500 * time.Millisecond)
 	ticker2 := time.NewTicker(10 * time.Millisecond)
-	var chani chan any = make(chan any)
-	var once *sync.Once = &sync.Once{}
+	//requests/responses
 	go func() {
 		for {
 			<-ticker2.C
-			if len(requests.requests) != 0 {
-				once.Do(func() {
-					close(chani)
-				})
-			}
-		}
-	}()
-	go func() {
-		for {
-			<-chani
-			nowi := time.Now()
-			var myJson = map[string]any{
-				"type": "receiver_chunks",
-			}
-			l("at least this got a pussy")
-			jsonData, _ := json.Marshal(myJson)
-
-			requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-			requestBody.Header.Set("Content-Type", "application/json")
-			requestBody.Host = "script.google.com"
-			resp, error1 := client1.Do(requestBody)
-			if resp == nil {
-				l("this happened but why? connection issues?", error1)
-				break
-			}
-			l("dick response of POST:", resp)
-			l("body response of POST:", resp.Body)
-
-			bytesa, _ := io.ReadAll(resp.Body)
-
-			l("stringfied body response of POST:", string(bytesa))
-			if error1 != nil {
-				l("fucking problem with POSTing an asshole", error1)
-				break
-			}
-
-			location := resp.Header.Get("location")
-			if location == "" {
-				l("MAYBE THIS IS RATE LIMIT BUT WE BREAK THE SHIT OUT OF THIS")
-				break
-			}
-			somepart := location[36:]
-
-			secondReq, _ := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
-
-			secondReq.Host = "script.googleusercontent.com"
-
-			resp, error1 = client1.Do(secondReq)
-
-			l("response of GET:", resp)
-			if resp == nil {
-				break
-			}
-			l("response body of GET:", resp.Body)
-			if error1 != nil {
-				l("fucking problem with GETing an asshole", error1)
-				break
-			}
-
-			bytesa, _ = io.ReadAll(resp.Body)
-
-			l("stringifed response body of GET:", string(bytesa))
-			jsoned := map[string][]string{}
-			if string(bytesa) != "null" {
-				l("this isn't null which means we can encode it to json maybe")
-				json.Unmarshal(bytesa, &jsoned)
-			} else {
-				l("response chunk is null whiich means we should retry or maybe?") // i dont i should break or continue?
-				continue
-			}
-			l("we passed the whole shit now we have the chunk of response")
-			rtt_perreq := time.Since(nowi).Milliseconds()
-			nowi2 := time.Now()
-			for key, value := range jsoned {
-				for _, each := range value {
-					packet, _ := base64.StdEncoding.DecodeString(each)
-					l("id:", key)
-					sockets[key].socket.Write(packet)
-				}
-			}
-			l("It took", rtt_perreq)
-			l("After iteration it took", time.Since(nowi2))
-			resp.Body.Close()
-			once = new(sync.Once)
-			chani = make(chan any)
-		}
-	}()
-
-	go func() {
-		for {
-			<-ticker.C
-			requests.mutex.Lock()
-			var batch int
-			leni := len(requests.requests)
-			if leni == 0 {
-				requests.mutex.Unlock()
-				continue
-			} else if leni >= 300 {
-				batch = 300
-			} else {
-				batch = leni
-			}
-			ids := map[string]map[string]any{}
-
-			for _, value := range requests.requests[:batch] {
-				detail := sockets[value.id]
-				if _, ok := ids[value.id]; !ok {
-					l("first jerk")
-					ids[value.id] = map[string]any{
-						"data":    []string{value.request},
-						"dstaddr": detail.dstaddr,
-						"dstport": detail.dstport,
-					}
-				} else {
-					l("sec jerk")
-					n := append(ids[value.id]["data"].([]string), value.request)
-					ids[value.id] = map[string]any{
-						"data":    n,
-						"dstaddr": detail.dstaddr,
-						"dstport": detail.dstport,
-					}
-				}
-			}
-			requests.requests = requests.requests[batch:]
-			requests.mutex.Unlock()
-
-			var myJson = map[string]any{
-				"ids":  ids,
-				"type": "client_chunks",
-			}
-
-			l("RESULT: ", ids)
-			jsonData, _ := json.Marshal(myJson)
-
-			requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-			requestBody.Header.Set("Content-Type", "application/json")
-			requestBody.Host = "script.google.com"
-			l("Before resp")
-			resp, error1 := client1.Do(requestBody)
-			if resp == nil {
-				continue
-			}
-			l("ass response of POST:", resp)
-			l("body response of POST:", resp.Body)
-			if error1 != nil {
-				l("fucking problem with POSTing an asshole", error1)
-				continue
-			}
-			resp.Body.Close()
+			batch(ticker, client1)
 		}
 	}()
 
