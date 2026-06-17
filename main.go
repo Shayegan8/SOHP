@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -55,112 +54,157 @@ var requests = []Request{}
 var bitchmut *sync.Mutex = &sync.Mutex{}
 var bitchs = []any{}
 
-func batch(ticker *time.Ticker, client1 *http.Client) {
-	<-ticker.C
-	reqmut.Lock()
-	var saved_batch = requests[:]
-	leni := len(saved_batch)
-	if leni == 0 {
-		reqmut.Unlock()
-		return
-	} else if leni >= 400 {
-		saved_batch = requests[:1000]
-		requests = requests[:1000]
-		// easy, just push the rest in the next batch, payload for each batch is like n, e.g batch1
-	} else {
-		saved_batch = requests[:]
-	}
-	requests = []Request{}
-	reqmut.Unlock()
-
+func send_reqs(saved_batch []Request, client1 *http.Client, batch int) {
 	bitchmut.Lock()
 	bitchs = append(bitchs, 'a')
 	l("ATTTENTIOOOOOOOOOOOOOOOON FUCKING JERK IS THIS\n\n\n\n\n\n", len(bitchs))
+	bitchmut.Unlock()
+	l("Im here and ready to fuck")
+	shitMap := map[string]SockDetail{}
+	ids := map[string]map[string]any{}
+	for _, value := range saved_batch {
+		l("PRINT THE DAMN,", ids[value.id])
+		if _, ok := ids[value.id]; !ok {
+			socksmut.Lock()
+			if _, oj := shitMap[value.id]; !oj {
+				shitMap[value.id] = sockets[value.id]
+			}
+			socksmut.Unlock()
+			l("first jerk")
+			ids[value.id] = map[string]any{
+				"data":    []string{value.request},
+				"dstaddr": shitMap[value.id].dstaddr,
+				"dstport": shitMap[value.id].dstport,
+			}
+		} else {
+			l("sec jerk")
+			n := append(ids[value.id]["data"].([]string), value.request)
+			ids[value.id] = map[string]any{
+				"data":    n,
+				"dstaddr": shitMap[value.id].dstaddr,
+				"dstport": shitMap[value.id].dstport,
+			}
+		}
+	}
 
-	if len(bitchs) == 15 {
-		bitchmut.Unlock()
-		ticker2 := time.NewTicker(10 * time.Millisecond)
+	myJson := map[string]any{
+		"ids":   ids,
+		"batch": batch,
+		"type":  "client_chunks",
+	}
+	l("SENDING TO", batch)
+	l("RESULT:", ids)
+	jsonData, _ := json.Marshal(myJson)
+
+	requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+	requestBody.Header.Set("Content-Type", "application/json")
+	requestBody.Host = "script.google.com"
+	l("Before resp")
+	resp, error1 := client1.Do(requestBody)
+	if resp == nil {
+		return
+	}
+	l("ass response of POST:", resp)
+	l("body response of POST:", resp.Body)
+	if error1 != nil {
+		l("fucking problem with POSTing an asshole", error1)
+		return
+	}
+	resp.Body.Close()
+
+}
+
+func batchf(ticker *time.Ticker, client1 *http.Client) {
+	<-ticker.C
+	l("called again")
+	batch := rand.Intn(90000) + 10000
+	reqmut.Lock()
+	var saved_batch []Request = requests[:]
+	reqmut.Unlock()
+	dummyjerk := false
+	onci := &sync.Once{}
+	callJerk := func() {
 		for {
-			<-ticker2.C
-			if len(bitchs) < 15 {
-				l("finallyadawdadaddad")
+			<-ticker.C
+			reqmut.Lock()
+			leni := len(saved_batch)
+			if leni == 0 {
+				saved_batch = requests[:]
+				reqmut.Unlock()
+				continue
+			}
+			jerki := len(requests)
+			onci.Do(func() {
+				if jerki >= 300 {
+					l("this cant be real once")
+					saved_batch = requests[:300]
+					requests = requests[300:]
+					// we need to somehow use another batch id for this case
+					send_reqs(saved_batch, client1, batch)
+					dummyjerk = true
+					batchf(ticker, client1)
+					l("ATTENTION!!!! MORE THAN I EXCEPTED, FIRST")
+					l("im called 4")
+				} else {
+					saved_batch = requests[:]
+					l("Checking", saved_batch)
+					l("Batch number:", batch)
+					requests = []Request{}
+					dummyjerk = true
+					send_reqs(saved_batch, client1, batch)
+					l("im called 3")
+				}
+			})
+			if dummyjerk {
+				reqmut.Unlock()
+				dummyjerk = false
 				break
 			}
-		}
-	} else {
-		bitchmut.Unlock()
-	}
-	go func() {
-		l("Im here and ready to fuck")
-		ids := map[string]map[string]any{}
-		batch := rand.Intn(90000) + 10000
-		for _, value := range saved_batch {
-			socksmut.Lock()
-			detail := sockets[value.id]
-			socksmut.Unlock()
-			l("PRINT THE DAMN,", ids[value.id])
-			if _, ok := ids[value.id]; !ok {
-				l("first jerk")
-				ids[value.id] = map[string]any{
-					"data":    []string{value.request},
-					"dstaddr": detail.dstaddr,
-					"dstport": detail.dstport,
-				}
+			if jerki >= 300 {
+				l("this cant be real")
+				saved_batch = requests[:300]
+				requests = requests[300:]
+				// we need to somehow use another batch id for this case
+				reqmut.Unlock()
+				send_reqs(saved_batch, client1, batch)
+				l("im called 1")
+				batchf(ticker, client1)
+				l("ATTENTION!!!! MORE THAN I EXCEPTED")
 			} else {
-				l("sec jerk")
-				n := append(ids[value.id]["data"].([]string), value.request)
-				ids[value.id] = map[string]any{
-					"data":    n,
-					"dstaddr": ids[value.id]["dstaddr"],
-					"dstport": ids[value.id]["dstport"],
-				}
+				saved_batch = requests[:]
+				l("FUCK ASS BITCH SAVED_BATCH", saved_batch)
+				requests = []Request{}
+				reqmut.Unlock()
+				l("im called 2")
+				send_reqs(saved_batch, client1, batch)
 			}
-		}
 
-		myJson := map[string]any{
-			"ids":   ids,
-			"batch": batch,
-			"type":  "client_chunks",
+			break
 		}
-		l("SENDING TO", batch)
-		l("RESULT:", ids)
-		jsonData, _ := json.Marshal(myJson)
+	}
+	callJerk()
+	// after that listening for response batch
 
-		requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
-		requestBody.Header.Set("Content-Type", "application/json")
-		requestBody.Host = "script.google.com"
-		l("Before resp")
-		resp, error1 := client1.Do(requestBody)
-		if resp == nil {
-			return
-		}
-		l("ass response of POST:", resp)
-		l("body response of POST:", resp.Body)
-		if error1 != nil {
-			l("fucking problem with POSTing an asshole", error1)
-			return
-		}
-		resp.Body.Close()
-		// after that listening for response batch
-
-		// RECEIVER
+	// RECEIVER
+	for {
+		l("Dawoidodwoadadpawapd")
 		nowi := time.Now()
-		myJson = map[string]any{
+		myJson := map[string]any{
 			"batch": batch,
 			"type":  "receiver_chunks",
 		}
 		l("GETTING FROM", batch)
 
 		l("at least this got a pussy")
-		jsonData, _ = json.Marshal(myJson)
+		jsonData, _ := json.Marshal(myJson)
 
-		requestBody, _ = http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+		requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
 		requestBody.Header.Set("Content-Type", "application/json")
 		requestBody.Host = "script.google.com"
-		resp, error1 = client1.Do(requestBody)
+		resp, error1 := client1.Do(requestBody)
 		if resp == nil {
 			l("this happened but why? connection issues?", error1)
-			return
+			break
 		}
 		l("dick response of POST:", resp)
 		l("body response of POST:", resp.Body)
@@ -170,13 +214,13 @@ func batch(ticker *time.Ticker, client1 *http.Client) {
 		l("stringfied body response of POST:", string(bytesa))
 		if error1 != nil {
 			l("fucking problem with POSTing an asshole", error1)
-			return
+			break
 		}
 
 		location := resp.Header.Get("location")
 		if location == "" {
 			l("MAYBE THIS IS RATE LIMIT BUT WE BREAK THE SHIT OUT OF THIS")
-			return
+			break
 		}
 		somepart := location[36:]
 
@@ -188,12 +232,13 @@ func batch(ticker *time.Ticker, client1 *http.Client) {
 
 		l("response of GET:", resp)
 		if resp == nil {
-			return
+			l("adawdadapdpadpapdpap")
+			continue
 		}
 		l("response body of GET:", resp.Body)
 		if error1 != nil {
 			l("fucking problem with GETing an asshole", error1)
-			return
+			break
 		}
 
 		bytesa, _ = io.ReadAll(resp.Body)
@@ -203,13 +248,13 @@ func batch(ticker *time.Ticker, client1 *http.Client) {
 		if string(bytesa) != "null" {
 			if strings.Contains(string(bytesa), "done") {
 				l("End of stream sent by receiver")
+				go batchf(ticker, client1)
 				return
 			}
 			l("this isn't null which means we can encode it to json maybe")
 			json.Unmarshal(bytesa, &jsoned)
 		} else {
-			l("response chunk is null whiich means we should retry or maybe?") // i dont i should break or continue?
-			return
+			l("response chunk?") // i dont i should break or continue?
 		}
 		l("we passed the whole shit now we have the chunk of response")
 		rtt_perreq := time.Since(nowi).Milliseconds()
@@ -224,7 +269,8 @@ func batch(ticker *time.Ticker, client1 *http.Client) {
 					socksmut.Unlock()
 				} else {
 					socksmut.Unlock()
-					return
+					l("There..")
+					break
 				}
 			}
 		}
@@ -245,7 +291,10 @@ func batch(ticker *time.Ticker, client1 *http.Client) {
 		bitchs = bitchs[:len(bitchs)-1]
 		l("FUCKING JERK AFTEEEEEEEEEEEEEEEEEEEER\n\n\n\n\n\n", len(bitchs))
 		bitchmut.Unlock()
-	}()
+		l("after jesus")
+
+		callJerk()
+	}
 }
 
 func handleClient(client net.Conn, client1 *http.Client) {
@@ -328,16 +377,19 @@ func handleClient(client net.Conn, client1 *http.Client) {
 
 		now := time.Now()
 		for {
-			reader := bufio.NewReader(client)
-			reader.Peek(1)
-			data, _ := reader.Peek(reader.Buffered())
+			data := make([]byte, 4048)
+			n, err := client.Read(data)
+			if err != nil {
+				l("data read error for", id, "err\n", err)
+				break
+			}
+			data = data[:n]
 			l("Request size is:", len(data))
 			l("Encoded Request:", base64.StdEncoding.EncodeToString(data))
 			socksmut.Lock()
 			sockets[id] = SockDetail{client, dstaddr, dstport, make(chan any, 1)}
 			socksmut.Unlock()
-			reader.Discard(len(data)) // this not required
-			if len(data) == 0 {       // as i tested i never see err
+			if len(data) == 0 { // as i tested i never see err
 				l("time took is:", time.Since(now))
 				break
 			}
@@ -402,14 +454,8 @@ func main() {
 	}
 
 	ticker := time.NewTicker(500 * time.Millisecond)
-	ticker2 := time.NewTicker(10 * time.Millisecond)
 	//requests/responses
-	go func() {
-		for {
-			<-ticker2.C
-			batch(ticker, client1)
-		}
-	}()
+	go batchf(ticker, client1)
 
 	go func() {
 		signalc, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
