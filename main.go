@@ -181,7 +181,7 @@ func main() {
 		}
 	}
 	dialer := &net.Dialer{
-		Timeout: 30 * time.Second,
+		Timeout: 360 * time.Second,
 	}
 	myTransport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -194,7 +194,7 @@ func main() {
 		},
 	}
 	client1 := &http.Client{
-		Timeout:   30 * time.Second,
+		Timeout:   360 * time.Second,
 		Transport: myTransport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -207,9 +207,7 @@ func main() {
 		log.Println(`Port is in use maybe`, error)
 	}
 
-	ticker := time.NewTicker(6000 * time.Millisecond)
-	chanXnxx := make(chan any, 1)
-	onceJerk := &sync.Once{}
+	ticker := time.NewTicker(500 * time.Millisecond)
 	//requests/responses
 	go func() {
 		for {
@@ -217,15 +215,8 @@ func main() {
 			reqmut.Lock()
 			if len(requests) == 0 {
 				reqmut.Unlock()
-
 				continue
 			}
-			reqmut.Unlock()
-			onceJerk.Do(func() {
-				chanXnxx <- []byte{}
-			})
-			<-chanXnxx
-			reqmut.Lock()
 			ids := map[string]map[string]any{}
 			for _, value := range requests[:] {
 				l("PRINT THE DAMN,", ids[value.id])
@@ -249,6 +240,7 @@ func main() {
 					}
 				}
 			}
+			requests = nil
 			reqmut.Unlock()
 			l("I Unlock 1 req?")
 
@@ -265,29 +257,21 @@ func main() {
 			l("Before resp")
 			resp, error1 := client1.Do(requestBody)
 			if resp == nil {
-				return
+				continue
 			}
 			l("ass response of POST:", resp)
 			l("body response of POST:", resp.Body)
 			if error1 != nil {
 				l("fucking problem with POSTing an asshole", error1)
-				return
+				continue
 			}
 			resp.Body.Close()
 		}
 	}()
 
-	ticker2 := time.NewTicker(500 * time.Millisecond)
-
+	// responses
 	go func() {
 		for {
-			<-ticker2.C
-			reqmut.Lock()
-			if len(requests) == 0 {
-				reqmut.Unlock()
-				continue
-			}
-			reqmut.Unlock()
 			l("I Unlocked? 1")
 			nowi := time.Now()
 			myJson := map[string]any{
@@ -303,7 +287,7 @@ func main() {
 			resp, error1 := client1.Do(requestBody)
 			if resp == nil {
 				l("this happened but why? connection issues?", error1)
-				return
+				continue
 			}
 			l("dick response of POST:", resp)
 			l("body response of POST:", resp.Body)
@@ -312,13 +296,13 @@ func main() {
 			l("stringfied body response of POST:", string(bytesa))
 			if error1 != nil {
 				l("fucking problem with POSTing an asshole", error1)
-				return
+				continue
 			}
 
 			location := resp.Header.Get("location")
 			if location == "" {
 				l("timeout or just rate limit")
-				return
+				continue
 			}
 			somepart := location[36:]
 
@@ -331,12 +315,12 @@ func main() {
 			l("response of GET:", resp)
 			if resp == nil {
 				l("adawdadapdpadpapdpap")
-				return
+				continue
 			}
 			l("response body of GET:", resp.Body)
 			if error1 != nil {
 				l("fucking problem with GETing an asshole", error1)
-				return
+				continue
 			}
 
 			bytesa, _ = io.ReadAll(resp.Body)
@@ -346,14 +330,13 @@ func main() {
 
 			if string(bytesa) == "" {
 				l("fuwadiiddidadadawd")
-				return
+				continue
 			}
 
 			if string(bytesa) != "null" {
-				if string(bytesa) == "done" {
-					l("THIS SHOULD HAPPPEND ONE TME!!!!!!!!!!!!!!!!!")
-					chanXnxx <- []byte{}
-					return
+				if string(bytesa) == "done" || string(bytesa) == "timeout" {
+					l("is this done? ", bool(string(bytesa) == "done"), "is this timeout?", bool(string(bytesa) == "timeout"))
+					continue
 				}
 				l("this isn't null which means we can encode it to json maybe")
 				json.Unmarshal(bytesa, &jsoned)
@@ -383,12 +366,6 @@ func main() {
 			l("After iteration it took", time.Since(nowi2))
 			resp.Body.Close()
 			l("after jesus")
-			reqmut.Lock()
-			l("I lock 2")
-			requests = nil
-			reqmut.Unlock()
-			l("I Unlocked 2 ?")
-			chanXnxx <- []byte{}
 		}
 	}()
 
