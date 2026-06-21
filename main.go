@@ -331,18 +331,15 @@ func main() {
 			if string(bytesa) == "" {
 				l("fuwadiiddidadadawd")
 				continue
-			}
-
-			if string(bytesa) != "null" {
-				if string(bytesa) == "done" || string(bytesa) == "timeout" {
-					l("is this done? ", bool(string(bytesa) == "done"), "is this timeout?", bool(string(bytesa) == "timeout"))
+			} else {
+				if string(bytesa) == "timeout" {
+					l("is this done?", bool(string(bytesa) == "done"), "is this timeout?", bool(string(bytesa) == "timeout"))
 					continue
 				}
 				l("this isn't null which means we can encode it to json maybe")
 				json.Unmarshal(bytesa, &jsoned)
-			} else {
-				l("response chunk?") // i dont i should break or continue?
 			}
+
 			l("we passed the whole shit now we have the chunk of response")
 			rtt_perreq := time.Since(nowi).Milliseconds()
 			nowi2 := time.Now()
