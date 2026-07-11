@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +35,8 @@ type SockDetail struct {
 	dstaddr string
 	dstport uint16
 	chani   chan any
+	typ     string
+	ip      string
 }
 
 var sockets map[string]SockDetail = map[string]SockDetail{}
@@ -69,7 +72,7 @@ func handleClient(client net.Conn) {
 	sbresp[1] = 0x00
 	client.Write(sbresp)
 	log.Println("Sub negotiation finished for", client.RemoteAddr().String())
-	areq := make([]byte, 8192*2) //16kb
+	areq := make([]byte, 4048)
 	_, err = client.Read(areq)
 	if err != nil {
 		return
@@ -81,15 +84,13 @@ func handleClient(client net.Conn) {
 	var dstaddr string
 	var dstport uint16
 	var portoffset uint8
+	var sex string
 	switch areq[3] { // ATYP
 	case 0x01: // IPv4
-		strbuf := make([]byte, 4)
-		strbuf[0] = areq[4]
-		strbuf[1] = areq[5]
-		strbuf[2] = areq[6]
-		strbuf[3] = areq[7]
-		dstaddr = string(strbuf)
+		ip := net.IP(areq[4:8])
+		dstaddr = ip.String()
 		portoffset = 8
+		sex = "v4"
 	case 0x03: // DOMAINNAME
 		log.Println("DOMAIN NAME!")
 		numberOfBytes := areq[4]
@@ -97,17 +98,16 @@ func handleClient(client net.Conn) {
 		log.Println("the damn thing", string(areq[5:numberOfBytes+5]))
 		dstaddr = string(areq[5 : numberOfBytes+5])
 		portoffset = 5 + numberOfBytes
+		sex = "domain"
 	case 0x04: // IPv6
-		for i := 4; i < 20; i += 2 {
-			hexed := fmt.Sprintf("%X", binary.BigEndian.Uint16(areq[i:i+2]))
-			dstaddr += hexed + "."
-		}
-		runes := []rune(dstaddr)
-		dstaddr = string(runes[:len(runes)-1])
-		portoffset = uint8(len(runes)) - 1
+		ip := net.IP(areq[4:20])
+		dstaddr = ip.String()
+		portoffset = 20
+		sex = "v6"
 	}
 	dstport = binary.BigEndian.Uint16(areq[portoffset : portoffset+2])
 	log.Println("FUCKING PORT", dstport)
+	id := uuid.New().String()
 
 	switch areq[1] { // CMD
 	case 0x01: // CONNECT
@@ -124,9 +124,7 @@ func handleClient(client net.Conn) {
 		log.Println("the dstaddr", dstaddr)
 		dst := net.JoinHostPort(dstaddr, fmt.Sprintf("%d", dstport))
 		log.Println("the address", dst)
-		defer client.Close()
 
-		id := uuid.New().String()
 		l("fucking id", id)
 
 		now := time.Now()
@@ -141,9 +139,9 @@ func handleClient(client net.Conn) {
 			l("Request size is:", len(data))
 			l("Encoded Request:", base64.StdEncoding.EncodeToString(data))
 			socksmut.Lock()
-			sockets[id] = SockDetail{client, dstaddr, dstport, make(chan any, 1)}
+			sockets[id] = SockDetail{client, dstaddr, dstport, make(chan any, 1), "tcp", sex}
 			socksmut.Unlock()
-			if len(data) == 0 { // as i tested i never see err
+			if len(data) == 0 {
 				l("time took is:", time.Since(now))
 				break
 			}
@@ -155,6 +153,93 @@ func handleClient(client net.Conn) {
 			l("request pushed")
 		}
 		l("Total time, " + time.Since(now).String())
+	case 0x03:
+		l("UDPPPPPP")
+		udpShit, _ := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: 0})
+		response := make([]byte, 10)
+		response[0] = 0x05 // VER
+		response[1] = 0x00 // REP
+		response[2] = 0x00 // RSV
+		response[3] = 0x01 // ATYP
+		// many clients dont give a fuck about server bound ip/port
+		response[4], response[5], response[6], response[7] = 0, 0, 0, 0
+		port := uint16(udpShit.LocalAddr().(*net.UDPAddr).Port)
+		binary.BigEndian.PutUint16(response[8:], port)
+
+		_, err := client.Write(response)
+		if err != nil {
+			l("Problem with writing this out continuing...")
+			client.Close()
+			udpShit.Close()
+			return
+		}
+		l("We wrote the response here")
+
+		for {
+			data := make([]byte, 4048)
+			n, _, err := udpShit.ReadFromUDP(data)
+			l("Somehow we read a shit from udp?")
+			if err != nil {
+				l("Error while reading packet from udp client,", err)
+				client.Close()
+				udpShit.Close()
+				break
+			}
+			data = data[:n]
+			rsv := binary.BigEndian.Uint16(data)
+			if rsv != 0x0000 {
+				l("Bad rsv,", rsv)
+				client.Close()
+				udpShit.Close()
+				continue
+			}
+			frag := data[2]
+			if frag != 0x00 {
+				l("FRAG is shitty,", frag)
+				continue
+			}
+			var dstaddr1 string
+			var portoffset1 uint8
+			var jerk string
+			switch data[3] { // atyp
+			case 0x01: // IPv4
+				l("FUCKING IPv4")
+				ip := net.IP(data[4:8])
+				dstaddr1 = ip.String()
+				portoffset1 = 8
+				jerk = "v4"
+			case 0x03: // DOMAINNAME
+				log.Println("DOMAIN NAME!")
+				numberOfBytes := data[4]
+				log.Println("number of octets", numberOfBytes)
+				log.Println("the damn thing", string(data[5:numberOfBytes+5]))
+				dstaddr1 = string(data[5 : numberOfBytes+5])
+				portoffset1 = 5 + numberOfBytes
+				jerk = "domain"
+			case 0x04: // IPv6
+				l("FUCKING IPV6")
+				ip := net.IP(data[4:20])
+				dstaddr1 = ip.String()
+				portoffset1 = 20
+				jerk = "v6"
+			}
+			l("DATA for", dstaddr1, ":", hex.EncodeToString(data))
+
+			fuckingP := binary.BigEndian.Uint16(data[portoffset1:])
+			actual_data := data[portoffset1+2:]
+			socksmut.Lock()
+			l("PUT ON MAP")
+			sockets[id] = SockDetail{udpShit, dstaddr1, fuckingP, make(chan any, 1), "udp", jerk}
+			socksmut.Unlock()
+
+			request := base64.StdEncoding.EncodeToString(actual_data)
+			l("request encoded")
+			reqmut.Lock()
+			requests = append(requests, Request{id, request})
+			reqmut.Unlock()
+
+			log.Println("udp FUCKING PORT", fuckingP)
+		}
 	}
 
 }
@@ -202,12 +287,14 @@ func main() {
 	}
 
 	log.Println("Listening on 12345")
-	listener, error := net.Listen("tcp", "0.0.0.0:12345")
-	if error != nil {
-		log.Println(`Port is in use maybe`, error)
+	listener, error1 := net.Listen("tcp", "0.0.0.0:12345")
+	if error1 != nil {
+		log.Println(`Port is in use maybe`, error1)
 	}
 
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(2000 * time.Millisecond)
+	shitjerk := &sync.Mutex{}
+	req := 0
 	//requests/responses
 	go func() {
 		for {
@@ -223,12 +310,15 @@ func main() {
 				if _, ok := ids[value.id]; !ok {
 					socksmut.Lock()
 					shitMap[value.id] = sockets[value.id]
+					l("PRINT THE SHIT OUT OF IT", shitMap[value.id])
 					socksmut.Unlock()
 					l("first jerk")
 					ids[value.id] = map[string]any{
 						"data":    []string{value.request},
 						"dstaddr": shitMap[value.id].dstaddr,
 						"dstport": shitMap[value.id].dstport,
+						"typ":     shitMap[value.id].typ,
+						"ip":      shitMap[value.id].ip,
 					}
 				} else {
 					l("sec jerk")
@@ -237,10 +327,14 @@ func main() {
 						"data":    n,
 						"dstaddr": shitMap[value.id].dstaddr,
 						"dstport": shitMap[value.id].dstport,
+						"typ":     shitMap[value.id].typ,
+						"ip":      shitMap[value.id].ip,
 					}
 				}
 			}
+			l("REQ N", len(requests))
 			requests = nil
+			l("REQ SIZE SHOULD BE 0:", len(requests))
 			reqmut.Unlock()
 			l("I Unlock 1 req?")
 
@@ -255,7 +349,11 @@ func main() {
 			requestBody.Header.Set("Content-Type", "application/json")
 			requestBody.Host = "script.google.com"
 			l("Before resp")
+			shitjerk.Lock()
+			req++
+			shitjerk.Unlock()
 			resp, error1 := client1.Do(requestBody)
+
 			if resp == nil {
 				continue
 			}
@@ -266,6 +364,9 @@ func main() {
 				continue
 			}
 			resp.Body.Close()
+			shitjerk.Lock()
+			l("FUCKING N OF REQS", req)
+			shitjerk.Unlock()
 		}
 	}()
 
