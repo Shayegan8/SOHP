@@ -2,3 +2,4 @@ config.json
 outside/nodemon.json
 outside/dist
 outside/node_modules
+.venv
