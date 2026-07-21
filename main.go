@@ -241,6 +241,57 @@ func handleClient(client net.Conn) {
 	}
 }
 
+func retry(client1 *http.Client, endpoints []string, ids map[string]map[string]any, count int, retryN int) {
+	myJson := map[string]any{
+		"ids":  ids,
+		"type": "client_chunks",
+		"n":    count,
+	}
+
+	l("FUCKING RETRY NUMBER:", retryN)
+
+	if retryN == 4 {
+		l("All app scripts are rate limited, exiting... (even cleaning up wont work now)")
+		os.Exit(0)
+	}
+
+	jsonData, _ := json.Marshal(myJson)
+
+	requestBody, _ := http.NewRequest("POST", endpoints[count], bytes.NewBuffer(jsonData))
+
+	requestBody.Header.Set("Content-Type", "application/json")
+	requestBody.Host = "script.google.com"
+	resp, error1 := client1.Do(requestBody)
+	if resp == nil {
+		l("response is null? req (when u get rate limited, theres a possibility u get null response for minutes then rate limit error as i tested)")
+		retryN++
+		if count == 3 {
+			count = 0
+		}
+		retry(client1, endpoints, ids, count+1, retryN)
+	}
+	l("ass response of POST req:", resp)
+
+	location := resp.Header.Get("location")
+	if location == "" {
+		l("REEEQ timeout or just rate limit")
+		retryN++
+		if count == 3 {
+			count = 0
+		}
+		retry(client1, endpoints, ids, count+1, retryN)
+
+	}
+	bod, _ := io.ReadAll(resp.Body)
+	l("body response of POST request:", string(bod))
+	if error1 != nil {
+		l("fucking problem with POSTing an asshole", error1)
+		return
+	}
+	resp.Body.Close()
+
+}
+
 func main() {
 	json.Unmarshal(configFile, &configMap)
 
@@ -291,7 +342,16 @@ func main() {
 
 	ticker := time.NewTicker(2000 * time.Millisecond)
 
-	fuck_number := int64(configMap["n"].(float64)) // for h scale
+	fuck_number := len(configMap["appscript_urls"].([]any)) - 1 // for redis h scale
+	var endpoints []string
+
+	if valu, ok := configMap["appscript_urls"].([]any); ok {
+		endpoints = make([]string, len(valu))
+		for i, v := range valu {
+			endpoints[i] = v.(string)
+		}
+	}
+
 	//my chunks
 	go func() {
 		for {
@@ -338,25 +398,34 @@ func main() {
 				"n":    fuck_number,
 			}
 
-			l("req number:", fuck_number)
 			fuck_number--
 
 			if fuck_number == 0 {
-				fuck_number = int64(configMap["n"].(float64))
+				fuck_number = len(configMap["appscript_urls"].([]any)) - 1
 			}
 
 			jsonData, _ := json.Marshal(myJson)
 
-			requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+			requestBody, _ := http.NewRequest("POST", endpoints[fuck_number], bytes.NewBuffer(jsonData))
+
 			requestBody.Header.Set("Content-Type", "application/json")
 			requestBody.Host = "script.google.com"
 			resp, error1 := client1.Do(requestBody)
 			if resp == nil {
 				l("response is null? req")
+				go retry(client1, endpoints, ids, fuck_number, 0)
 				continue
 			}
 			l("ass response of POST req:", resp)
-			l("body response of POST request:", resp.Body)
+
+			location := resp.Header.Get("location")
+			if location == "" {
+				l("REEEQ timeout or just rate limit")
+				go retry(client1, endpoints, ids, fuck_number, 0)
+				continue
+			}
+			bod, _ := io.ReadAll(resp.Body)
+			l("body response of POST request:", string(bod))
 			if error1 != nil {
 				l("fucking problem with POSTing an asshole", error1)
 				continue
@@ -367,7 +436,7 @@ func main() {
 
 	// endpoint chunks
 
-	for num := range int64(configMap["n"].(float64)) + 1 {
+	for num := range len(configMap["appscript_urls"].([]any)) {
 		go func() {
 			for {
 				l("resp Goroutine", num)
@@ -379,7 +448,7 @@ func main() {
 
 				jsonData, _ := json.Marshal(myJson)
 
-				requestBody, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData))
+				requestBody, _ := http.NewRequest("POST", endpoints[num], bytes.NewBuffer(jsonData))
 				requestBody.Header.Set("Content-Type", "application/json")
 				requestBody.Host = "script.google.com"
 				resp, error1 := client1.Do(requestBody)
@@ -474,7 +543,7 @@ func main() {
 			"type": "fullclose",
 		}
 		jsonData2, _ := json.Marshal(myJson)
-		requestBody2, _ := http.NewRequest("POST", configMap["appscript_url"].(string), bytes.NewBuffer(jsonData2))
+		requestBody2, _ := http.NewRequest("POST", endpoints[fuck_number], bytes.NewBuffer(jsonData2))
 		requestBody2.Header.Set("Content-Type", "application/json")
 		requestBody2.Host = "script.google.com"
 		_, error1 := client1.Do(requestBody2)
