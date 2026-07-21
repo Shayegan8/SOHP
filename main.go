@@ -241,7 +241,7 @@ func handleClient(client net.Conn) {
 	}
 }
 
-func retry(client1 *http.Client, endpoints []string, ids map[string]map[string]any, count int, retryN int) {
+func retry(client1 *http.Client, endpoints []string, ids map[string]map[string]any, count int64, retryN int) {
 	myJson := map[string]any{
 		"ids":  ids,
 		"type": "client_chunks",
@@ -340,9 +340,10 @@ func main() {
 		log.Println(`Port is in use maybe`, error1)
 	}
 
-	ticker := time.NewTicker(2000 * time.Millisecond)
+	ticker := time.NewTicker(500 * time.Millisecond)
 
-	fuck_number := len(configMap["appscript_urls"].([]any)) - 1 // for redis h scale
+	fuck_number := int64(configMap["n"].(float64)) // for redis h scale
+	l("FUCKING FUCK NUMBER:", fuck_number)
 	var endpoints []string
 
 	if valu, ok := configMap["appscript_urls"].([]any); ok {
@@ -398,14 +399,15 @@ func main() {
 				"n":    fuck_number,
 			}
 
-			fuck_number--
+			if fuck_number != 0 {
+				fuck_number--
 
-			if fuck_number == 0 {
-				fuck_number = len(configMap["appscript_urls"].([]any)) - 1
+				if fuck_number == 0 {
+					fuck_number = int64(configMap["n"].(float64))
+				}
 			}
 
 			jsonData, _ := json.Marshal(myJson)
-
 			requestBody, _ := http.NewRequest("POST", endpoints[fuck_number], bytes.NewBuffer(jsonData))
 
 			requestBody.Header.Set("Content-Type", "application/json")
