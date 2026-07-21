@@ -4,7 +4,7 @@ function doPost(e) {
   const type = rawBody.type
   const rtt = rawBody.rtt
   const n = rawBody.n
-  const upstashes = [ // we need 4
+  const upstashes = [
     { upstashURL: "url", upstashAuthKey: "key" }
   ]
 
