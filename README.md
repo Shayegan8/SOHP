@@ -10,9 +10,9 @@ Fetch calls a day
 All of requests we use (for client chunks and vpn server chunks) are SNI requests
 
 ### Some math
-for sending chunks if we say each 0.5 second sends a batch then each second send 2 batch, then for each hour we use 2*3600 = 7200 fetch calls
-same happens for listeners so 14400 api calls needed at all for a hour
-14400*24/20000 = 17.28, so u need 18 google accounts for 24 browsing which is not really possible because VPN SERVER restarts, i cant seriallize sockets, if u increase the number of listeners (number of google appscript endpoints) u will allocate more memory in program but, you may (most of the time as i tested) reduce the elements(batchs) in each redis list that each listener carry on, which means u will process things faster, how many databases? well free upstash dbs have a 500000 command usage limit, how many rest commands we use? i dont know ;/, it really depends on the destination and infrastructure u run the receiver.ts on it, if its VPN SERVER, well VPN SERVER adds a visibile timeout for each calls in a stream, as i saw for a https communication it may put that big timeout (it can be 2 or 5s or more or less) during handshake or tls middle, in receiver we put a 500ms timeout after each chunk arrives from the destination, if another chunk arrives we reset the timeout, if it takes more than 500ms, WE USE UPSTASH REDIS CALL here, rpushing to the list, well because of this i explained i really dont know how much databases we should get, its free make more accounts get more, their limits get reset each month
+for sending chunks if we say each 2 second sends a batch then each second send 2 batch, then for each hour we use 2*3600 = 7200 fetch calls, things got changed for listeners, you will attach the listener after each request, each time you send a request batch your database
+endpoint and list for being used gets changed, saying how many lists (j) you need means how many times you want use a single endpoint
+well if we say j = 2 (0,1,2 lists 3 lists) and n = 3 (0,1,2,3 databases) you can have at maximum 4*3 = 12 listeners, each listener has a 10s timeout, it does 5 UrlFetchApp.fetch() each 2s and after that listeners goes off
 
 # TODO
 1. If project gets some attention i will change the bandwidth and intervals with rtt measurements
