@@ -5,7 +5,7 @@
 # Explanation
 This SOCKS5 proxy gathers your clients chunks every 0.5 second and batch them all in one request to google app script endpoint
 It has n listeners with 6minute timeout that are waiting for response batch from redis database (they all perform redis LPOP with timeouts)
-Every listener has its own redis database, for using it for a day without getting rate limited according to google documentation we can have 20000
+Every lisutener has its own redis database, for using it for a day without getting rate limited according to google documentation we can have 20000
 Fetch calls a day
 All of requests we use (for client chunks and vpn server chunks) are SNI requests
 
@@ -13,6 +13,9 @@ All of requests we use (for client chunks and vpn server chunks) are SNI request
 for sending chunks if we say each 2 second sends a batch then each second send 2 batch, then for each hour we use 2*3600 = 7200 fetch calls, things got changed for listeners, you will attach the listener after each request, each time you send a request batch your database
 endpoint and list for being used gets changed, saying how many lists (j) you need means how many times you want use a single endpoint
 well if we say j = 2 (0,1,2 lists 3 lists) and n = 3 (0,1,2,3 databases) you can have at maximum 4*3 = 12 listeners, each listener has a 10s timeout, it does 5 UrlFetchApp.fetch() each 2s and after that listeners goes off
+
+# Installation
+soon i will add it again, its really harder than other vpns
 
 # TODO
 1. If project gets some attention i will change the bandwidth and intervals with rtt measurements
