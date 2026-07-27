@@ -28,7 +28,4 @@ I got inspired by [MasterHttpRelayVPN](https://github.com/masterking32/MasterHtt
 I first made a vpn with just redis db as a message bus but i needed to pay money for buying a database, so i decided to pay
 Nothing and made this, I made this shit alone definetly its buggy, If you're interested u can help me with contributing in this project,
 This project is useful when Internet in Iran is whitelisted again and google is open and you need tcp tunneling (udp should work but i need proper infrastructure and proper links for testing that too, its possible protocol is implemented correctly but ipv6 and many other destinations arent working in VPN SERVER)
-NO FUCKING AI IS USED THERE
-
-# FA 
-سگ وحشی
+NO AI IS USED THERE
