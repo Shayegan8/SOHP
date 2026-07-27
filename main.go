@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -241,46 +242,49 @@ func handleClient(client net.Conn) {
 	}
 }
 
-func retry(client1 *http.Client, endpoints []string, ids map[string]map[string]any, count int64, retryN int) {
+func client_chunks(client1 *http.Client, ids map[string]map[string]any, what_database int64, what_list int64, endpoints_indexes int64, store_listeners [][]int, store_listenersmut *sync.Mutex) {
+	l("WHERE IM SENDING? WHAT DATABASE?", what_database, "THEN WHAT LIST?", what_list)
 	myJson := map[string]any{
 		"ids":  ids,
 		"type": "client_chunks",
-		"n":    count,
-	}
-
-	l("FUCKING RETRY NUMBER:", retryN)
-
-	if retryN == 4 {
-		l("All app scripts are rate limited, exiting... (even cleaning up wont work now)")
-		os.Exit(0)
+		"n":    what_database,
 	}
 
 	jsonData, _ := json.Marshal(myJson)
-
-	requestBody, _ := http.NewRequest("POST", endpoints[count], bytes.NewBuffer(jsonData))
+	endpoints_mut.Lock()
+	requestBody, _ := http.NewRequest("POST", endpoints[endpoints_indexes], bytes.NewBuffer(jsonData))
+	endpoints_mut.Unlock()
 
 	requestBody.Header.Set("Content-Type", "application/json")
 	requestBody.Host = "script.google.com"
 	resp, error1 := client1.Do(requestBody)
 	if resp == nil {
-		l("response is null? req (when u get rate limited, theres a possibility u get null response for minutes then rate limit error as i tested)")
-		retryN++
-		if count == 3 {
-			count = 0
-		}
-		retry(client1, endpoints, ids, count+1, retryN)
+		l("response is null? req")
+		//go retry(client1, endpoints, ids, fuck_number, 0)
+		endpoints_mut.Lock()
+		c_endpoints := endpoints[:endpoints_indexes]
+		b_endpoints := endpoints[endpoints_indexes+1:]
+		c_endpoints = append(c_endpoints, b_endpoints...)
+		endpoints = c_endpoints
+		endpoints_mut.Unlock()
+		go client_chunks(client1, ids, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
+		return
 	}
 	l("ass response of POST req:", resp)
 
 	location := resp.Header.Get("location")
 	if location == "" {
 		l("REEEQ timeout or just rate limit")
-		retryN++
-		if count == 3 {
-			count = 0
-		}
-		retry(client1, endpoints, ids, count+1, retryN)
+		//go retry(client1, endpoints, ids, fuck_number, 0)
+		endpoints_mut.Lock()
+		c_endpoints := endpoints[:endpoints_indexes]
+		b_endpoints := endpoints[endpoints_indexes+1:]
+		c_endpoints = append(c_endpoints, b_endpoints...)
+		endpoints = c_endpoints
+		endpoints_mut.Unlock()
 
+		go client_chunks(client1, ids, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
+		return
 	}
 	bod, _ := io.ReadAll(resp.Body)
 	l("body response of POST request:", string(bod))
@@ -290,7 +294,200 @@ func retry(client1 *http.Client, endpoints []string, ids map[string]map[string]a
 	}
 	resp.Body.Close()
 
+	store_listenersmut.Lock()
+	if store_listeners[what_database][what_list] != 1 {
+		store_listeners[what_database][what_list] = 1
+		l("attatching the shit")
+
+		endpoint_chunks(client1, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
+	}
+	store_listenersmut.Unlock()
+	if what_database != 0 {
+		what_database--
+
+		if what_database == 0 {
+			what_database = int64(configMap["n"].(float64))
+		}
+	}
+
+	if what_list != 0 {
+		what_list--
+
+		if what_list == 0 {
+			what_list = int64(configMap["j"].(float64))
+			if endpoints_indexes != 0 {
+				endpoints_indexes--
+
+				if endpoints_indexes == 0 {
+					endpoints_indexes = int64(len(configMap["appscript_urls"].([]any))) - 1
+				}
+			}
+		}
+	}
 }
+
+type OneElement struct {
+	Result []string `json:"result"`
+}
+
+func endpoint_chunks(client1 *http.Client, what_database int64, what_list int64, endpoints_indexes int64, store_listeners [][]int, store_listenersmut *sync.Mutex) {
+	go func() {
+		for {
+			nowi := time.Now()
+			myJson := map[string]any{
+				"n":    what_database,
+				"j":    what_list,
+				"type": "receiver_chunks",
+			}
+			l("sexjerkk dick")
+			l("I AM SENDING THIS TO ENDPOINT WITH DATABASE OF", what_database, "AND LIST OF", what_list)
+			jsonData, _ := json.Marshal(myJson)
+			endpoints_mut.Lock()
+			l("what shit im sending?", endpoints[endpoints_indexes])
+			l("what index?", endpoints_indexes)
+			l("endpoints?", endpoints)
+			requestBody, _ := http.NewRequest("POST", endpoints[endpoints_indexes], bytes.NewBuffer(jsonData))
+			endpoints_mut.Unlock()
+			requestBody.Header.Set("Content-Type", "application/json")
+			requestBody.Host = "script.google.com"
+			resp, error1 := client1.Do(requestBody)
+			if resp == nil {
+				l("this happened but why? connection issues?", error1)
+				endpoints_mut.Lock()
+				c_endpoints := endpoints[:endpoints_indexes]
+				b_endpoints := endpoints[endpoints_indexes+1:]
+				c_endpoints = append(c_endpoints, b_endpoints...)
+				endpoints = c_endpoints
+				endpoints_mut.Unlock()
+				go endpoint_chunks(client1, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
+				return
+			}
+			l("resp dick response of POST:", resp)
+			l("resp body response of POST:", resp.Body)
+
+			bytesa, _ := io.ReadAll(resp.Body)
+			l("resp stringfied body response of POST:", string(bytesa))
+			if error1 != nil {
+				l("fucking problem with POSTing an asshole", error1)
+				break
+			}
+
+			location := resp.Header.Get("location")
+			if location == "" {
+				l("resp timeout or just rate limit")
+				endpoints_mut.Lock()
+				c_endpoints := endpoints[:endpoints_indexes]
+				b_endpoints := endpoints[endpoints_indexes+1:]
+				c_endpoints = append(c_endpoints, b_endpoints...)
+				endpoints = c_endpoints
+				endpoints_mut.Unlock()
+				go endpoint_chunks(client1, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
+				return
+			}
+			somepart := location[36:]
+
+			secondReq, _ := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
+
+			secondReq.Host = "script.googleusercontent.com"
+
+			resp, error1 = client1.Do(secondReq)
+
+			l("response of GET:", resp)
+			if resp == nil {
+				l("resp adawdadapdpadpapdpap")
+				continue
+			}
+			l("response body of GET:", resp.Body)
+			if error1 != nil {
+				l("resp fucking problem with GETing an asshole", error1)
+				continue
+			}
+
+			bytesa, _ = io.ReadAll(resp.Body)
+
+			l("stringifed response body of GET:", string(bytesa))
+			rtt_perreq := time.Since(nowi).Milliseconds()
+			nowi2 := time.Now()
+
+			if string(bytesa) == "" {
+				l("fuwadiiddidadadawd")
+				continue
+			} else {
+				if string(bytesa) == "timeout" {
+					l("is this done?", bool(string(bytesa) == "done"), "is this timeout?", bool(string(bytesa) == "timeout"))
+					store_listenersmut.Lock()
+					store_listeners[what_database][what_list] = 0
+					store_listenersmut.Unlock()
+					runtime.Goexit()
+				} else if []rune(string(bytesa))[0] == '[' {
+					var results []OneElement
+					l("this should work")
+					err := json.Unmarshal(bytesa, &results)
+					if err != nil {
+						l("thehheheheh", err)
+					}
+					for _, oneResult := range results {
+						l("The fucking map", oneResult.Result)
+						for _, each1 := range oneResult.Result {
+							l("how many times?")
+							jsoned := map[string][]string{}
+							json.Unmarshal([]byte(each1), &jsoned)
+							for key, value := range jsoned {
+								for _, each := range value {
+									packet, _ := base64.StdEncoding.DecodeString(each)
+									l("id:", key)
+									socksmut.Lock()
+									if sockets[key].socket != nil { // as i tested before socket when gets closed there's a possibility i get fucked up here
+										sockets[key].socket.Write(packet)
+										socksmut.Unlock()
+									} else {
+										socksmut.Unlock()
+										l("There..")
+										break
+									}
+								}
+							}
+						}
+					}
+				} else {
+					l("jerskexawadwa")
+					var oneResult OneElement
+					json.Unmarshal(bytesa, &oneResult)
+					l("The fucking map", oneResult.Result)
+					for _, each1 := range oneResult.Result {
+						l("how many times?")
+						jsoned := map[string][]string{}
+						json.Unmarshal([]byte(each1), &jsoned)
+						for key, value := range jsoned {
+							for _, each := range value {
+								packet, _ := base64.StdEncoding.DecodeString(each)
+								l("id:", key)
+								socksmut.Lock()
+								if sockets[key].socket != nil { // as i tested before socket when gets closed there's a possibility i get fucked up here
+									sockets[key].socket.Write(packet)
+									socksmut.Unlock()
+								} else {
+									socksmut.Unlock()
+									l("There..")
+									break
+								}
+							}
+						}
+
+					}
+				}
+			}
+
+			l("resp It took", rtt_perreq)
+			l("resp After iteration it took", time.Since(nowi2))
+			resp.Body.Close()
+			l("resp after jesus")
+		}
+	}()
+}
+
+var endpoints []string
+var endpoints_mut = &sync.Mutex{}
 
 func main() {
 	json.Unmarshal(configFile, &configMap)
@@ -340,11 +537,7 @@ func main() {
 		log.Println(`Port is in use maybe`, error1)
 	}
 
-	ticker := time.NewTicker(500 * time.Millisecond)
-
-	fuck_number := int64(configMap["n"].(float64)) // for redis h scale
-	l("FUCKING FUCK NUMBER:", fuck_number)
-	var endpoints []string
+	ticker := time.NewTicker(2000 * time.Millisecond)
 
 	if valu, ok := configMap["appscript_urls"].([]any); ok {
 		endpoints = make([]string, len(valu))
@@ -355,6 +548,14 @@ func main() {
 
 	//my chunks
 	go func() {
+		store_listenersmut := &sync.Mutex{}
+		what_database := int64(configMap["n"].(float64))
+		what_list := int64(configMap["j"].(float64))
+		store_listeners := make([][]int, what_database+1)
+		for n := range store_listeners {
+			store_listeners[n] = make([]int, what_list+1)
+		}
+		endpoints_indexes := int64(len(configMap["appscript_urls"].([]any))) - 1
 		for {
 			<-ticker.C
 			reqmut.Lock()
@@ -377,6 +578,7 @@ func main() {
 						"dstport": shitMap[value.id].dstport,
 						"typ":     shitMap[value.id].typ,
 						"ip":      shitMap[value.id].ip,
+						"j":       what_list,
 					}
 				} else {
 					l("sec jerk")
@@ -387,154 +589,15 @@ func main() {
 						"dstport": shitMap[value.id].dstport,
 						"typ":     shitMap[value.id].typ,
 						"ip":      shitMap[value.id].ip,
+						"j":       what_list,
 					}
 				}
 			}
 			requests = nil
 			reqmut.Unlock()
-
-			myJson := map[string]any{
-				"ids":  ids,
-				"type": "client_chunks",
-				"n":    fuck_number,
-			}
-
-			if fuck_number != 0 {
-				fuck_number--
-
-				if fuck_number == 0 {
-					fuck_number = int64(configMap["n"].(float64))
-				}
-			}
-
-			jsonData, _ := json.Marshal(myJson)
-			requestBody, _ := http.NewRequest("POST", endpoints[fuck_number], bytes.NewBuffer(jsonData))
-
-			requestBody.Header.Set("Content-Type", "application/json")
-			requestBody.Host = "script.google.com"
-			resp, error1 := client1.Do(requestBody)
-			if resp == nil {
-				l("response is null? req")
-				go retry(client1, endpoints, ids, fuck_number, 0)
-				continue
-			}
-			l("ass response of POST req:", resp)
-
-			location := resp.Header.Get("location")
-			if location == "" {
-				l("REEEQ timeout or just rate limit")
-				go retry(client1, endpoints, ids, fuck_number, 0)
-				continue
-			}
-			bod, _ := io.ReadAll(resp.Body)
-			l("body response of POST request:", string(bod))
-			if error1 != nil {
-				l("fucking problem with POSTing an asshole", error1)
-				continue
-			}
-			resp.Body.Close()
+			client_chunks(client1, ids, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
 		}
 	}()
-
-	// endpoint chunks
-
-	for num := range len(configMap["appscript_urls"].([]any)) {
-		go func() {
-			for {
-				l("resp Goroutine", num)
-				nowi := time.Now()
-				myJson := map[string]any{
-					"n":    num,
-					"type": "receiver_chunks",
-				}
-
-				jsonData, _ := json.Marshal(myJson)
-
-				requestBody, _ := http.NewRequest("POST", endpoints[num], bytes.NewBuffer(jsonData))
-				requestBody.Header.Set("Content-Type", "application/json")
-				requestBody.Host = "script.google.com"
-				resp, error1 := client1.Do(requestBody)
-				if resp == nil {
-					l("this happened but why? connection issues?", error1)
-					continue
-				}
-				l("resp dick response of POST:", resp)
-				l("resp body response of POST:", resp.Body)
-
-				bytesa, _ := io.ReadAll(resp.Body)
-				l("resp stringfied body response of POST:", string(bytesa))
-				if error1 != nil {
-					l("fucking problem with POSTing an asshole", error1)
-					continue
-				}
-
-				location := resp.Header.Get("location")
-				if location == "" {
-					l("resp timeout or just rate limit")
-					continue
-				}
-				somepart := location[36:]
-
-				secondReq, _ := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
-
-				secondReq.Host = "script.googleusercontent.com"
-
-				resp, error1 = client1.Do(secondReq)
-
-				l("response of GET:", resp)
-				if resp == nil {
-					l("resp adawdadapdpadpapdpap")
-					continue
-				}
-				l("response body of GET:", resp.Body)
-				if error1 != nil {
-					l("resp fucking problem with GETing an asshole", error1)
-					continue
-				}
-
-				bytesa, _ = io.ReadAll(resp.Body)
-
-				l("stringifed response body of GET:", string(bytesa))
-				jsoned := map[string][]string{}
-
-				if string(bytesa) == "" {
-					l("fuwadiiddidadadawd")
-					continue
-				} else {
-					if string(bytesa) == "timeout" {
-						l("is this done?", bool(string(bytesa) == "done"), "is this timeout?", bool(string(bytesa) == "timeout"))
-						continue
-					}
-					l("this isn't null which means we can encode it to json maybe")
-					json.Unmarshal(bytesa, &jsoned)
-				}
-
-				l("we passed the whole shit now we have the chunk of response")
-				rtt_perreq := time.Since(nowi).Milliseconds()
-				nowi2 := time.Now()
-				for key, value := range jsoned {
-					for _, each := range value {
-						packet, _ := base64.StdEncoding.DecodeString(each)
-						l("id:", key)
-						socksmut.Lock()
-						if sockets[key].socket != nil { // as i tested before socket when gets closed there's a possibility i get fucked up here
-							sockets[key].socket.Write(packet)
-							socksmut.Unlock()
-						} else {
-							socksmut.Unlock()
-							l("There..")
-							break
-						}
-					}
-				}
-
-				l("resp It took", rtt_perreq)
-				l("resp After iteration it took", time.Since(nowi2))
-				resp.Body.Close()
-				l("resp after jesus")
-			}
-		}()
-	}
 
 	go func() {
 		signalc, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -545,7 +608,9 @@ func main() {
 			"type": "fullclose",
 		}
 		jsonData2, _ := json.Marshal(myJson)
-		requestBody2, _ := http.NewRequest("POST", endpoints[fuck_number], bytes.NewBuffer(jsonData2))
+		endpoints_mut.Lock()
+		requestBody2, _ := http.NewRequest("POST", endpoints[0], bytes.NewBuffer(jsonData2))
+		endpoints_mut.Unlock()
 		requestBody2.Header.Set("Content-Type", "application/json")
 		requestBody2.Host = "script.google.com"
 		_, error1 := client1.Do(requestBody2)
