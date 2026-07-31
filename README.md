@@ -3,7 +3,7 @@
 ![diagram](images/diagram.png)
 
 # Explanation
-This SOCKS5 proxy gathers your clients chunks every 0.5 second and batch them all in one request to google app script endpoint
+This SOCKS5 proxy gathers your clients chunks every 2 second and batch them all in one request to google app script endpoint
 It has n listeners with 6minute timeout that are waiting for response batch from redis database (they all perform redis LPOP with timeouts)
 Every lisutener has its own redis database, for using it for a day without getting rate limited according to google documentation we can have 20000
 Fetch calls a day
