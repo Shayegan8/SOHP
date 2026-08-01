@@ -20,11 +20,11 @@ soon i will add it again, its really harder than other vpns
 # TODO
 1. If project gets some attention i will change the bandwidth and intervals with rtt measurements
 2. Make logs better
-3. Fixing bugs
-4. Copy gstatic ip list that MasterHttpRelayVPN tested them and use them because why i should gather my list (there [ips](https://www.gstatic.com/ipranges/goog.json))
+3. Copy gstatic ip list that MasterHttpRelayVPN tested them and use them because why i should gather my list (there [ips](https://www.gstatic.com/ipranges/goog.json))
 
 # Known Issues
-Udp is kinda broken, i couldn't test it better, but some udp chunks could get transfered successfully but others couldn't because vpn server didn't support Ipv6 and some destinations didnt work (Im talking about this workflows)
+Udp is kinda broken, i couldn't test it better, but some udp chunks could get transfered successfully but others couldn't because vpn server didn't support Ipv6 and some destinations didnt work (Im talking about this workflows).
+There are might be bugs for endpoint changing after rate limit.
 
 # Why i made this?
 I got inspired by [MasterHttpRelayVPN](https://github.com/masterking32/MasterHttpRelayVPN) its using SNI for fetching requests 
