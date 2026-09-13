@@ -364,6 +364,7 @@ func endpoint_chunks(client1 *http.Client, what_database int64, what_list int64,
 			}
 			l("resp dick response of POST:", resp)
 			l("resp body response of POST:", resp.Body)
+			l("What status?", resp.Status)
 
 			bytesa, _ := io.ReadAll(resp.Body)
 			l("resp stringfied body response of POST:", string(bytesa))
@@ -393,6 +394,7 @@ func endpoint_chunks(client1 *http.Client, what_database int64, what_list int64,
 			resp, error1 = client1.Do(secondReq)
 
 			l("response of GET:", resp)
+			l("What is the endpoint?", endpoints[endpoints_indexes])
 			if resp == nil {
 				l("resp adawdadapdpadpapdpap")
 				continue
@@ -511,7 +513,7 @@ func main() {
 		}
 	}
 	dialer := &net.Dialer{
-		Timeout: 360 * time.Second,
+		Timeout: 60 * time.Second,
 	}
 	myTransport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -524,7 +526,7 @@ func main() {
 		},
 	}
 	client1 := &http.Client{
-		Timeout:   360 * time.Second,
+		Timeout:   60 * time.Second,
 		Transport: myTransport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -537,7 +539,7 @@ func main() {
 		log.Println(`Port is in use maybe`, error1)
 	}
 
-	ticker := time.NewTicker(2000 * time.Millisecond)
+	ticker := time.NewTicker(1000 * time.Millisecond)
 
 	if valu, ok := configMap["appscript_urls"].([]any); ok {
 		endpoints = make([]string, len(valu))
@@ -556,12 +558,39 @@ func main() {
 			store_listeners[n] = make([]int, what_list+1)
 		}
 		endpoints_indexes := int64(len(configMap["appscript_urls"].([]any))) - 1
+		reqmut.Lock()
+		requests_len := len(requests)
+		reqmut.Unlock()
+		counter := 0
 		for {
 			<-ticker.C
 			reqmut.Lock()
 			if len(requests) == 0 {
 				reqmut.Unlock()
 				continue
+			}
+			if len(requests) != requests_len {
+				requests_len = len(requests)
+				counter = 0
+				calculate_size := 0
+				for _, eachRequest := range requests {
+					calculate_size += len(eachRequest.request)
+				}
+				if calculate_size < 1024*500 {
+					reqmut.Unlock()
+					l("\n\nWEEE NOT GONNA PUSHHHHHHH\n\n", calculate_size)
+					continue
+				} else {
+					l("\n\nWEEE GONNA PUSHHHHHHH\n\n", calculate_size)
+				}
+			} else {
+				if counter != 3 {
+					counter++
+					reqmut.Unlock()
+					continue
+				} else {
+					l("This means we should push the batch because it was same like before")
+				}
 			}
 			ids := map[string]map[string]any{}
 			for _, value := range requests[:] {
