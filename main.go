@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -36,7 +37,6 @@ type SockDetail struct {
 	socket  net.Conn
 	dstaddr string
 	dstport uint16
-	chani   chan any
 	typ     string
 	ip      string
 }
@@ -138,7 +138,7 @@ func handleClient(client net.Conn) {
 			l("Request size is:", len(data))
 			l("Encoded Request:", base64.StdEncoding.EncodeToString(data))
 			socksmut.Lock()
-			sockets[id] = SockDetail{client, dstaddr, dstport, make(chan any, 1), "tcp", sex}
+			sockets[id] = SockDetail{client, dstaddr, dstport, "tcp", sex}
 			socksmut.Unlock()
 			if len(data) == 0 {
 				l("time took is:", time.Since(now))
@@ -228,7 +228,7 @@ func handleClient(client net.Conn) {
 			actual_data := data[portoffset1+2:]
 			socksmut.Lock()
 			l("PUT ON MAP")
-			sockets[id] = SockDetail{udpShit, dstaddr1, fuckingP, make(chan any, 1), "udp", jerk}
+			sockets[id] = SockDetail{udpShit, dstaddr1, fuckingP, "udp", jerk}
 			socksmut.Unlock()
 
 			request := base64.StdEncoding.EncodeToString(actual_data)
@@ -242,18 +242,229 @@ func handleClient(client net.Conn) {
 	}
 }
 
-func client_chunks(client1 *http.Client, ids map[string]map[string]any, what_database int64, what_list int64, endpoints_indexes int64, store_listeners [][]int, store_listenersmut *sync.Mutex) {
-	l("WHERE IM SENDING? WHAT DATABASE?", what_database, "THEN WHAT LIST?", what_list)
+var endpoints_mut = &sync.Mutex{}
+var endpoints_amut = &sync.Mutex{}
+var endpoints_flag bool = false
+
+type Respnl struct {
+	Result []json.RawMessage `json:"result"`
+}
+
+func endpoint_chunks(client1 *http.Client, endpoints []string, j int64) {
+	once := &sync.Once{}
+	secturk := int64(configMap["sector"].(float64))
+	chanjerk := make(chan any, j*secturk)
+	l("secturkkkk:", j*secturk)
+	checkmut := &sync.Mutex{}
+	var checker int64 = 0
+	endpoints_amut.Lock()
+	endpoints_c := endpoints
+	endpoints_amut.Unlock()
+	for num, endpoint := range endpoints_c {
+		if int64(num) == secturk+1 {
+			break
+		}
+		mut := &sync.Mutex{}
+		numj := int64(configMap["dbs"].(float64))
+		for nj := range j + 1 {
+			l("j++++1")
+			thereonce := &sync.Once{}
+			go func() {
+				for {
+					select {
+					case <-chanjerk:
+						runtime.Goexit()
+					default:
+						l("resp Goroutine")
+						nowi := time.Now()
+						mut.Lock()
+						l("which database it uses?", numj)
+						l("which list it uses?", nj)
+						myJson := map[string]any{
+							"n":    numj,
+							"type": "receiver_chunks",
+							"j":    nj,
+						}
+						if numj != 0 {
+							numj--
+						}
+						mut.Unlock()
+
+						jsonData, _ := json.Marshal(myJson)
+
+						requestBody, _ := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonData))
+						requestBody.Header.Set("Content-Type", "application/json")
+						requestBody.Host = "script.google.com"
+						resp, error1 := client1.Do(requestBody)
+						if resp == nil {
+							l("this happened but why? connection issues?", error1)
+							continue
+						}
+						l("resp dick response of POST:", resp)
+						l("resp body response of POST:", resp.Body)
+
+						bytesa, _ := io.ReadAll(resp.Body)
+						l("resp stringfied body response of POST:", string(bytesa))
+						if error1 != nil {
+							l("fucking problem with POSTing an asshole", error1)
+							continue
+						}
+
+						location := resp.Header.Get("location")
+						if location == "" {
+							l("resp timeout or just rate limit")
+							thereonce.Do(func() {
+								checkmut.Lock()
+								checker++
+								checkmut.Unlock()
+							})
+							if checker == j*secturk {
+								once.Do(func() {
+									copy_endpoints := make([]string, len(endpoints_c)-3)
+									endpoints_amut.Lock()
+									for i := range endpoints {
+										if len(endpoints) < i+3 {
+											copy_endpoints[i] = endpoints[i+3]
+										}
+									}
+
+									if slices.Compare(copy_endpoints, endpoints) == 0 {
+										endpoints_amut.Unlock()
+										return
+									}
+									endpoints = copy_endpoints
+									endpoints_amut.Unlock()
+
+									for range secturk * j {
+										l("secturkation")
+										chanjerk <- []byte{}
+									}
+									endpoint_chunks(client1, endpoints, j)
+								})
+								break
+							} else {
+								continue
+							}
+						}
+						somepart := location[36:]
+
+						secondReq, _ := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
+
+						secondReq.Host = "script.googleusercontent.com"
+
+						resp, error1 = client1.Do(secondReq)
+
+						l("response of GET:", resp)
+						if resp == nil {
+							l("resp adawdadapdpadpapdpap")
+							continue
+						}
+						l("response body of GET:", resp.Body)
+						if error1 != nil {
+							l("resp fucking problem with GETing an asshole", error1)
+							continue
+						}
+
+						bytesa, _ = io.ReadAll(resp.Body)
+						l("stringifed response body of GET:", string(bytesa))
+						strbody := []rune(string(bytesa))
+
+						if string(bytesa) == "timeout" {
+							l("is this done?", bool(string(bytesa) == "done"), "is this timeout?", bool(string(bytesa) == "timeout"))
+							endpoints_mut.Lock()
+							endpoints_flag = false
+							endpoints_mut.Unlock()
+							runtime.Goexit()
+						}
+
+						if strbody[0] == '[' { // means its a list of shits
+							l("sexjerk")
+							l("print it:", string(bytesa))
+							jsoned := []map[string]map[string][]string{}
+							json.Unmarshal(bytesa, &jsoned)
+							for _, each := range jsoned {
+								get := each["result"]
+								for key, value := range get {
+									for _, each := range value {
+										packet, _ := base64.StdEncoding.DecodeString(each)
+										l("id:", key)
+										socksmut.Lock()
+										if sockets[key].socket != nil { // as i tested before socket when gets closed there's a possibility i get fucked up here
+											sockets[key].socket.Write(packet)
+											socksmut.Unlock()
+										} else {
+											socksmut.Unlock()
+											l("There..")
+											break
+										}
+									}
+								}
+							}
+						} else { // means not
+							l("not sexjerk")
+							jsoned := map[string][]string{}
+							json.Unmarshal(bytesa, &jsoned)
+							get := jsoned["result"]
+							getb, _ := json.Marshal(get)
+							var unmar []map[string][]string
+							json.Unmarshal(getb, &unmar)
+							l("print the damn", string(getb))
+							l("print the fucking map", unmar)
+							for _, each := range unmar {
+								l("now print the fucking map", each)
+								for key, value := range each {
+									for _, vv := range value {
+										packet, _ := base64.StdEncoding.DecodeString(vv)
+										l("id:", key)
+										socksmut.Lock()
+										if sockets[key].socket != nil { // as i tested before socket when gets closed there's a possibility i get fucked up here
+											sockets[key].socket.Write(packet)
+											socksmut.Unlock()
+										} else {
+											socksmut.Unlock()
+											l("There..")
+											break
+										}
+									}
+								}
+							}
+
+						}
+
+						l("we passed the whole shit now we have the chunk of response")
+						rtt_perreq := time.Since(nowi).Milliseconds()
+						nowi2 := time.Now()
+
+						l("resp It took", rtt_perreq)
+						l("resp After iteration it took", time.Since(nowi2))
+						resp.Body.Close()
+						l("resp after jesus")
+					}
+				}
+			}()
+		}
+	}
+}
+
+func send_chunks(ids map[string]map[string]any, endpoints []string, client1 *http.Client, fuck_number int64, shash_number int64, sex_number int64) {
+
 	myJson := map[string]any{
 		"ids":  ids,
 		"type": "client_chunks",
-		"n":    what_database,
+		"n":    fuck_number,
 	}
 
 	jsonData, _ := json.Marshal(myJson)
-	endpoints_mut.Lock()
-	requestBody, _ := http.NewRequest("POST", endpoints[endpoints_indexes], bytes.NewBuffer(jsonData))
-	endpoints_mut.Unlock()
+	endpoints_amut.Lock()
+	requestBody, _ := http.NewRequest("POST", endpoints[shash_number], bytes.NewBuffer(jsonData))
+	if shash_number != 0 { // which endpoint
+		shash_number--
+
+		if shash_number == 0 {
+			shash_number = int64(len(configMap["appscript_urls"].([]any)) - 1)
+		}
+	}
+	endpoints_amut.Unlock()
 
 	requestBody.Header.Set("Content-Type", "application/json")
 	requestBody.Host = "script.google.com"
@@ -261,13 +472,36 @@ func client_chunks(client1 *http.Client, ids map[string]map[string]any, what_dat
 	if resp == nil {
 		l("response is null? req")
 		//go retry(client1, endpoints, ids, fuck_number, 0)
-		endpoints_mut.Lock()
-		c_endpoints := endpoints[:endpoints_indexes]
-		b_endpoints := endpoints[endpoints_indexes+1:]
-		c_endpoints = append(c_endpoints, b_endpoints...)
-		endpoints = c_endpoints
-		endpoints_mut.Unlock()
-		go client_chunks(client1, ids, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
+
+		copy_endpoints := make([]string, len(endpoints)-3)
+		endpoints_amut.Lock()
+		for i := range endpoints {
+			if len(endpoints) < i+3 {
+				copy_endpoints[i] = endpoints[i+3]
+			}
+		}
+
+		if slices.Compare(copy_endpoints, endpoints) == 0 {
+			endpoints_amut.Unlock()
+			return
+		}
+		endpoints = copy_endpoints
+		endpoints_amut.Unlock()
+		send_chunks(ids, endpoints, client1, fuck_number, shash_number, sex_number)
+		if sex_number != 0 { // which list within database
+			sex_number--
+
+			if sex_number == 0 {
+				sex_number = int64(configMap["j"].(float64))
+			}
+		}
+		if fuck_number != 0 { // which database
+			fuck_number--
+
+			if fuck_number == 0 {
+				fuck_number = int64(configMap["dbs"].(float64))
+			}
+		}
 		return
 	}
 	l("ass response of POST req:", resp)
@@ -276,14 +510,22 @@ func client_chunks(client1 *http.Client, ids map[string]map[string]any, what_dat
 	if location == "" {
 		l("REEEQ timeout or just rate limit")
 		//go retry(client1, endpoints, ids, fuck_number, 0)
-		endpoints_mut.Lock()
-		c_endpoints := endpoints[:endpoints_indexes]
-		b_endpoints := endpoints[endpoints_indexes+1:]
-		c_endpoints = append(c_endpoints, b_endpoints...)
-		endpoints = c_endpoints
-		endpoints_mut.Unlock()
+		copy_endpoints := make([]string, len(endpoints)-3)
+		endpoints_amut.Lock()
+		for i := range endpoints {
+			if len(endpoints) < i+3 {
+				copy_endpoints[i] = endpoints[i+3]
+			}
+		}
 
-		go client_chunks(client1, ids, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
+		if slices.Compare(copy_endpoints, endpoints) == 0 {
+			endpoints_amut.Unlock()
+			return
+		}
+		endpoints = copy_endpoints
+		endpoints_amut.Unlock()
+		send_chunks(ids, endpoints, client1, fuck_number, shash_number, sex_number)
+
 		return
 	}
 	bod, _ := io.ReadAll(resp.Body)
@@ -294,202 +536,14 @@ func client_chunks(client1 *http.Client, ids map[string]map[string]any, what_dat
 	}
 	resp.Body.Close()
 
-	store_listenersmut.Lock()
-	if store_listeners[what_database][what_list] != 1 {
-		store_listeners[what_database][what_list] = 1
+	endpoints_mut.Lock()
+	if !endpoints_flag {
+		endpoints_flag = true
 		l("attatching the shit")
-
-		endpoint_chunks(client1, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
+		endpoint_chunks(client1, endpoints, sex_number)
 	}
-	store_listenersmut.Unlock()
-	if what_database != 0 {
-		what_database--
-
-		if what_database == 0 {
-			what_database = int64(configMap["n"].(float64))
-		}
-	}
-
-	if what_list != 0 {
-		what_list--
-
-		if what_list == 0 {
-			what_list = int64(configMap["j"].(float64))
-			if endpoints_indexes != 0 {
-				endpoints_indexes--
-
-				if endpoints_indexes == 0 {
-					endpoints_indexes = int64(len(configMap["appscript_urls"].([]any))) - 1
-				}
-			}
-		}
-	}
+	endpoints_mut.Unlock()
 }
-
-type OneElement struct {
-	Result []string `json:"result"`
-}
-
-func endpoint_chunks(client1 *http.Client, what_database int64, what_list int64, endpoints_indexes int64, store_listeners [][]int, store_listenersmut *sync.Mutex) {
-	go func() {
-		for {
-			nowi := time.Now()
-			myJson := map[string]any{
-				"n":    what_database,
-				"j":    what_list,
-				"type": "receiver_chunks",
-			}
-			l("sexjerkk dick")
-			l("I AM SENDING THIS TO ENDPOINT WITH DATABASE OF", what_database, "AND LIST OF", what_list)
-			jsonData, _ := json.Marshal(myJson)
-			endpoints_mut.Lock()
-			l("what shit im sending?", endpoints[endpoints_indexes])
-			l("what index?", endpoints_indexes)
-			l("endpoints?", endpoints)
-			requestBody, _ := http.NewRequest("POST", endpoints[endpoints_indexes], bytes.NewBuffer(jsonData))
-			endpoints_mut.Unlock()
-			requestBody.Header.Set("Content-Type", "application/json")
-			requestBody.Host = "script.google.com"
-			resp, error1 := client1.Do(requestBody)
-			if resp == nil {
-				l("this happened but why? connection issues?", error1)
-				endpoints_mut.Lock()
-				c_endpoints := endpoints[:endpoints_indexes]
-				b_endpoints := endpoints[endpoints_indexes+1:]
-				c_endpoints = append(c_endpoints, b_endpoints...)
-				endpoints = c_endpoints
-				endpoints_mut.Unlock()
-				go endpoint_chunks(client1, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
-				return
-			}
-			l("resp dick response of POST:", resp)
-			l("resp body response of POST:", resp.Body)
-			l("What status?", resp.Status)
-
-			bytesa, _ := io.ReadAll(resp.Body)
-			l("resp stringfied body response of POST:", string(bytesa))
-			if error1 != nil {
-				l("fucking problem with POSTing an asshole", error1)
-				break
-			}
-
-			location := resp.Header.Get("location")
-			if location == "" {
-				l("resp timeout or just rate limit")
-				endpoints_mut.Lock()
-				c_endpoints := endpoints[:endpoints_indexes]
-				b_endpoints := endpoints[endpoints_indexes+1:]
-				c_endpoints = append(c_endpoints, b_endpoints...)
-				endpoints = c_endpoints
-				endpoints_mut.Unlock()
-				go endpoint_chunks(client1, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
-				return
-			}
-			somepart := location[36:]
-
-			secondReq, _ := http.NewRequest("GET", "https://www.google.com"+somepart, nil)
-
-			secondReq.Host = "script.googleusercontent.com"
-
-			resp, error1 = client1.Do(secondReq)
-
-			l("response of GET:", resp)
-			l("What is the endpoint?", endpoints[endpoints_indexes])
-			if resp == nil {
-				l("resp adawdadapdpadpapdpap")
-				continue
-			}
-			l("response body of GET:", resp.Body)
-			if error1 != nil {
-				l("resp fucking problem with GETing an asshole", error1)
-				continue
-			}
-
-			bytesa, _ = io.ReadAll(resp.Body)
-
-			l("stringifed response body of GET:", string(bytesa))
-			rtt_perreq := time.Since(nowi).Milliseconds()
-			nowi2 := time.Now()
-
-			if string(bytesa) == "" {
-				l("fuwadiiddidadadawd")
-				continue
-			} else {
-				if string(bytesa) == "timeout" {
-					l("is this done?", bool(string(bytesa) == "done"), "is this timeout?", bool(string(bytesa) == "timeout"))
-					store_listenersmut.Lock()
-					store_listeners[what_database][what_list] = 0
-					store_listenersmut.Unlock()
-					runtime.Goexit()
-				} else if []rune(string(bytesa))[0] == '[' {
-					var results []OneElement
-					l("this should work")
-					err := json.Unmarshal(bytesa, &results)
-					if err != nil {
-						l("thehheheheh", err)
-					}
-					for _, oneResult := range results {
-						l("The fucking map", oneResult.Result)
-						for _, each1 := range oneResult.Result {
-							l("how many times?")
-							jsoned := map[string][]string{}
-							json.Unmarshal([]byte(each1), &jsoned)
-							for key, value := range jsoned {
-								for _, each := range value {
-									packet, _ := base64.StdEncoding.DecodeString(each)
-									l("id:", key)
-									socksmut.Lock()
-									if sockets[key].socket != nil { // as i tested before socket when gets closed there's a possibility i get fucked up here
-										sockets[key].socket.Write(packet)
-										socksmut.Unlock()
-									} else {
-										socksmut.Unlock()
-										l("There..")
-										break
-									}
-								}
-							}
-						}
-					}
-				} else {
-					l("jerskexawadwa")
-					var oneResult OneElement
-					json.Unmarshal(bytesa, &oneResult)
-					l("The fucking map", oneResult.Result)
-					for _, each1 := range oneResult.Result {
-						l("how many times?")
-						jsoned := map[string][]string{}
-						json.Unmarshal([]byte(each1), &jsoned)
-						for key, value := range jsoned {
-							for _, each := range value {
-								packet, _ := base64.StdEncoding.DecodeString(each)
-								l("id:", key)
-								socksmut.Lock()
-								if sockets[key].socket != nil { // as i tested before socket when gets closed there's a possibility i get fucked up here
-									sockets[key].socket.Write(packet)
-									socksmut.Unlock()
-								} else {
-									socksmut.Unlock()
-									l("There..")
-									break
-								}
-							}
-						}
-
-					}
-				}
-			}
-
-			l("resp It took", rtt_perreq)
-			l("resp After iteration it took", time.Since(nowi2))
-			resp.Body.Close()
-			l("resp after jesus")
-		}
-	}()
-}
-
-var endpoints []string
-var endpoints_mut = &sync.Mutex{}
 
 func main() {
 	json.Unmarshal(configFile, &configMap)
@@ -513,7 +567,7 @@ func main() {
 		}
 	}
 	dialer := &net.Dialer{
-		Timeout: 60 * time.Second,
+		Timeout: 360 * time.Second,
 	}
 	myTransport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -526,7 +580,7 @@ func main() {
 		},
 	}
 	client1 := &http.Client{
-		Timeout:   60 * time.Second,
+		Timeout:   360 * time.Second,
 		Transport: myTransport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -539,60 +593,35 @@ func main() {
 		log.Println(`Port is in use maybe`, error1)
 	}
 
-	ticker := time.NewTicker(1000 * time.Millisecond)
+	ticker := time.NewTicker(2000 * time.Millisecond)
+
+	fuck_number := int64(configMap["dbs"].(float64)) // for redis h scale
+	sex_number := int64(configMap["j"].(float64))
+	shash_number := int64(len(configMap["appscript_urls"].([]any)) - 1)
+	l("FUCKING FUCK NUMBER:", shash_number)
+	endpoints := make([]string, shash_number+1)
 
 	if valu, ok := configMap["appscript_urls"].([]any); ok {
-		endpoints = make([]string, len(valu))
 		for i, v := range valu {
+			l("sss")
+			l(v.(string))
 			endpoints[i] = v.(string)
 		}
 	}
 
 	//my chunks
 	go func() {
-		store_listenersmut := &sync.Mutex{}
-		what_database := int64(configMap["n"].(float64))
-		what_list := int64(configMap["j"].(float64))
-		store_listeners := make([][]int, what_database+1)
-		for n := range store_listeners {
-			store_listeners[n] = make([]int, what_list+1)
-		}
-		endpoints_indexes := int64(len(configMap["appscript_urls"].([]any))) - 1
-		reqmut.Lock()
-		requests_len := len(requests)
-		reqmut.Unlock()
-		counter := 0
 		for {
 			<-ticker.C
 			reqmut.Lock()
 			if len(requests) == 0 {
 				reqmut.Unlock()
 				continue
-			}
-			if len(requests) != requests_len {
-				requests_len = len(requests)
-				counter = 0
-				calculate_size := 0
-				for _, eachRequest := range requests {
-					calculate_size += len(eachRequest.request)
-				}
-				if calculate_size < 1024*500 {
-					reqmut.Unlock()
-					l("\n\nWEEE NOT GONNA PUSHHHHHHH\n\n", calculate_size)
-					continue
-				} else {
-					l("\n\nWEEE GONNA PUSHHHHHHH\n\n", calculate_size)
-				}
 			} else {
-				if counter != 3 {
-					counter++
-					reqmut.Unlock()
-					continue
-				} else {
-					l("This means we should push the batch because it was same like before")
-				}
+				l("seex")
 			}
 			ids := map[string]map[string]any{}
+			l("the reqs:", requests[:])
 			for _, value := range requests[:] {
 				l("req PRINT THE DAMN,", ids[value.id])
 				if _, ok := ids[value.id]; !ok {
@@ -607,7 +636,7 @@ func main() {
 						"dstport": shitMap[value.id].dstport,
 						"typ":     shitMap[value.id].typ,
 						"ip":      shitMap[value.id].ip,
-						"j":       what_list,
+						"j":       sex_number,
 					}
 				} else {
 					l("sec jerk")
@@ -618,13 +647,14 @@ func main() {
 						"dstport": shitMap[value.id].dstport,
 						"typ":     shitMap[value.id].typ,
 						"ip":      shitMap[value.id].ip,
-						"j":       what_list,
+						"j":       sex_number,
 					}
 				}
 			}
 			requests = nil
 			reqmut.Unlock()
-			client_chunks(client1, ids, what_database, what_list, endpoints_indexes, store_listeners, store_listenersmut)
+
+			send_chunks(ids, endpoints, client1, fuck_number, shash_number, sex_number)
 		}
 	}()
 
@@ -637,9 +667,11 @@ func main() {
 			"type": "fullclose",
 		}
 		jsonData2, _ := json.Marshal(myJson)
-		endpoints_mut.Lock()
-		requestBody2, _ := http.NewRequest("POST", endpoints[0], bytes.NewBuffer(jsonData2))
-		endpoints_mut.Unlock()
+		endpoints_amut.Lock()
+		l(endpoints[shash_number])
+		requestBody2, _ := http.NewRequest("POST", endpoints[shash_number], bytes.NewBuffer(jsonData2))
+		endpoints_amut.Unlock()
+
 		requestBody2.Header.Set("Content-Type", "application/json")
 		requestBody2.Host = "script.google.com"
 		_, error1 := client1.Do(requestBody2)
